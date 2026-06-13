@@ -39,6 +39,57 @@ const colorMap: Record<string, { bar: string; badge: string; ring: string }> = {
   zinc:   { bar: "bg-zinc-400",   badge: "bg-zinc-800      text-zinc-400",    ring: "border-zinc-600"   },
 };
 
+// ── Folder grouping helpers ───────────────────────────────────────────────────
+
+function parentDir(path: string): string {
+  const idx = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
+  return idx > 0 ? path.slice(0, idx) : path;
+}
+
+// Label a folder relative to the open project (e.g. "Content\levels"); falls back
+// to just the immediate folder name when no project root is known.
+function folderLabel(parent: string, projectPath: string | null): string {
+  if (projectPath) {
+    const rootDir = parentDir(projectPath);
+    if (parent.toLowerCase().startsWith(rootDir.toLowerCase())) {
+      const rel = parent.slice(rootDir.length).replace(/^[\\/]+/, "");
+      return rel || "(project root)";
+    }
+  }
+  const idx = Math.max(parent.lastIndexOf("\\"), parent.lastIndexOf("/"));
+  return idx >= 0 ? parent.slice(idx + 1) : parent;
+}
+
+type FileGroup = { key: string; label: string; files: FileEntry[] };
+
+// Name a project from its main-file path, e.g. "...\PP410_EWT_56\X.uproject" -> "PP410_EWT_56".
+function deriveProjectName(projectPath: string): string {
+  const dir = parentDir(projectPath);
+  const idx = Math.max(dir.lastIndexOf("\\"), dir.lastIndexOf("/"));
+  return idx >= 0 ? dir.slice(idx + 1) : dir;
+}
+
+// Group all files under the open project (named after its .uproject/.sln folder).
+// When no project is known, fall back to grouping by the immediate folder.
+function groupFiles(files: FileEntry[], projectPath: string | null, projectName: string | null): FileGroup[] {
+  if (projectPath && projectName) {
+    return [{ key: projectPath, label: projectName, files }];
+  }
+  const groups: FileGroup[] = [];
+  const index = new Map<string, number>();
+  for (const f of files) {
+    const parent = parentDir(f.path);
+    let gi = index.get(parent);
+    if (gi === undefined) {
+      gi = groups.length;
+      index.set(parent, gi);
+      groups.push({ key: parent, label: folderLabel(parent, null), files: [] });
+    }
+    groups[gi].files.push(f);
+  }
+  return groups;
+}
+
 export default function Creative() {
   const { trackedApps, watchedPaths, refreshTick, runningApps, triggerRefresh } = useAppContext();
   const [recentFiles, setRecentFiles]   = useState<FileEntry[]>([]);
@@ -59,7 +110,7 @@ export default function Creative() {
   useEffect(() => {
     runningApps.forEach((r) => {
       if (r.project_path) {
-        invoke<FileEntry[]>("get_project_files", { path: r.project_path, limit: 8 })
+        invoke<FileEntry[]>("get_project_files", { path: r.project_path, limit: 30 })
           .then((files) => setProjectFiles((prev) => ({ ...prev, [r.app]: files })))
           .catch(() => {});
       }
@@ -71,7 +122,7 @@ export default function Creative() {
   function filesForApp(app: AppDef): FileEntry[] {
     return recentFiles
       .filter((f) => app.exts.includes(f.ext.toLowerCase()))
-      .slice(0, 5);
+      .slice(0, 12);
   }
 
   return (
@@ -119,7 +170,7 @@ export default function Creative() {
           const isExpanded = expanded === app.name;
           const running    = runningApps.find((r) => r.app === app.name);
           const projFiles  = running?.project_path ? (projectFiles[app.name] ?? []) : null;
-          const appFiles   = projFiles && projFiles.length > 0 ? projFiles.slice(0, 6) : filesForApp(app);
+          const appFiles   = projFiles && projFiles.length > 0 ? projFiles.slice(0, 20) : filesForApp(app);
 
           return (
             <div
@@ -180,24 +231,46 @@ export default function Creative() {
                       <p className="text-xs text-zinc-500 uppercase tracking-widest px-5 py-3">
                         {projFiles && projFiles.length > 0 ? "Files in open project" : "Recent project files"}
                       </p>
-                      {appFiles.map((f, i) => (
-                        <div
-                          key={i}
-                          className="flex items-center justify-between px-5 py-3 hover:bg-zinc-800/50 transition-colors cursor-pointer border-t border-zinc-800/50"
-                        >
-                          <div className="min-w-0 flex items-center gap-3">
-                            <span className={`text-xs font-mono font-bold px-1.5 py-0.5 rounded shrink-0 ${EXT_COLOR[f.ext] ?? "bg-zinc-800 text-zinc-400"}`}>
-                              .{f.ext}
+                      {groupFiles(
+                        appFiles,
+                        running?.project_path ?? null,
+                        running ? (running.project ?? deriveProjectName(running.project_path ?? "")) : null,
+                      ).map((group) => (
+                        <div key={group.key}>
+                          {/* Project header — named after the .uproject / .sln folder */}
+                          <div className="flex items-center gap-2 px-5 py-2 bg-zinc-800/40 border-t border-zinc-800/50">
+                            <span className="text-xs">📁</span>
+                            <span className="text-xs font-semibold text-zinc-200 truncate font-mono">{group.label}</span>
+                            <span className="text-xs text-zinc-600 shrink-0">
+                              · {group.files.length} file{group.files.length !== 1 ? "s" : ""}
                             </span>
-                            <div className="min-w-0">
-                              <p className="text-sm text-white font-medium truncate">{f.name}</p>
-                              <p className="text-xs text-zinc-500 font-mono truncate mt-0.5">{f.path}</p>
-                            </div>
                           </div>
-                          <div className="text-right shrink-0 ml-4">
-                            <p className="text-xs text-zinc-400">{formatRelativeTime(f.last_modified)}</p>
-                            <p className="text-xs text-zinc-600 mt-0.5">{formatBytes(f.size)}</p>
-                          </div>
+                          {/* Files nested under the project */}
+                          {group.files.map((f, i) => {
+                            const sub = folderLabel(parentDir(f.path), running?.project_path ?? null);
+                            return (
+                              <div
+                                key={i}
+                                className="flex items-center justify-between pl-10 pr-5 py-2.5 hover:bg-zinc-800/50 transition-colors cursor-pointer border-t border-zinc-800/30"
+                              >
+                                <div className="min-w-0 flex items-center gap-3">
+                                  <span className={`text-xs font-mono font-bold px-1.5 py-0.5 rounded shrink-0 ${EXT_COLOR[f.ext] ?? "bg-zinc-800 text-zinc-400"}`}>
+                                    .{f.ext}
+                                  </span>
+                                  <div className="min-w-0">
+                                    <p className="text-sm text-white font-medium truncate">{f.name}</p>
+                                    {sub && sub !== "(project root)" && (
+                                      <p className="text-xs text-zinc-600 font-mono truncate mt-0.5">{sub}</p>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="text-right shrink-0 ml-4">
+                                  <p className="text-xs text-zinc-400">{formatRelativeTime(f.last_modified)}</p>
+                                  <p className="text-xs text-zinc-600 mt-0.5">{formatBytes(f.size)}</p>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       ))}
                     </>
