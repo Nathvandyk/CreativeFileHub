@@ -12,6 +12,8 @@ export interface FileEntry {
   is_dir: boolean;
   ext: string;
   last_modified: number;
+  project_root?: string | null;
+  project_name?: string | null;
 }
 
 export interface AppSettings {

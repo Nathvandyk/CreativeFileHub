@@ -62,28 +62,29 @@ function folderLabel(parent: string, projectPath: string | null): string {
 
 type FileGroup = { key: string; label: string; files: FileEntry[] };
 
-// Name a project from its main-file path, e.g. "...\PP410_EWT_56\X.uproject" -> "PP410_EWT_56".
-function deriveProjectName(projectPath: string): string {
-  const dir = parentDir(projectPath);
-  const idx = Math.max(dir.lastIndexOf("\\"), dir.lastIndexOf("/"));
-  return idx >= 0 ? dir.slice(idx + 1) : dir;
+// Show a file's location relative to its project root (e.g. "Content\levels").
+// Empty string means the file sits directly in the project root.
+function subPath(f: FileEntry): string {
+  const dir = parentDir(f.path);
+  if (f.project_root && dir.toLowerCase().startsWith(f.project_root.toLowerCase())) {
+    return dir.slice(f.project_root.length).replace(/^[\\/]+/, "");
+  }
+  return folderLabel(dir, null);
 }
 
-// Group all files under the open project (named after its .uproject/.sln folder).
-// When no project is known, fall back to grouping by the immediate folder.
-function groupFiles(files: FileEntry[], projectPath: string | null, projectName: string | null): FileGroup[] {
-  if (projectPath && projectName) {
-    return [{ key: projectPath, label: projectName, files }];
-  }
+// Group files by the project the backend resolved for them (the folder holding the
+// .uproject/.sln/.blend). Files without a detected project fall back to their folder.
+function groupFiles(files: FileEntry[]): FileGroup[] {
   const groups: FileGroup[] = [];
   const index = new Map<string, number>();
   for (const f of files) {
-    const parent = parentDir(f.path);
-    let gi = index.get(parent);
+    const key   = f.project_root ?? parentDir(f.path);
+    const label = f.project_name ?? folderLabel(parentDir(f.path), null);
+    let gi = index.get(key);
     if (gi === undefined) {
       gi = groups.length;
-      index.set(parent, gi);
-      groups.push({ key: parent, label: folderLabel(parent, null), files: [] });
+      index.set(key, gi);
+      groups.push({ key, label, files: [] });
     }
     groups[gi].files.push(f);
   }
@@ -231,13 +232,9 @@ export default function Creative() {
                       <p className="text-xs text-zinc-500 uppercase tracking-widest px-5 py-3">
                         {projFiles && projFiles.length > 0 ? "Files in open project" : "Recent project files"}
                       </p>
-                      {groupFiles(
-                        appFiles,
-                        running?.project_path ?? null,
-                        running ? (running.project ?? deriveProjectName(running.project_path ?? "")) : null,
-                      ).map((group) => (
+                      {groupFiles(appFiles).map((group) => (
                         <div key={group.key}>
-                          {/* Project header — named after the .uproject / .sln folder */}
+                          {/* Project header — named after the .uproject / .sln / .blend folder */}
                           <div className="flex items-center gap-2 px-5 py-2 bg-zinc-800/40 border-t border-zinc-800/50">
                             <span className="text-xs">📁</span>
                             <span className="text-xs font-semibold text-zinc-200 truncate font-mono">{group.label}</span>
@@ -247,7 +244,7 @@ export default function Creative() {
                           </div>
                           {/* Files nested under the project */}
                           {group.files.map((f, i) => {
-                            const sub = folderLabel(parentDir(f.path), running?.project_path ?? null);
+                            const sub = subPath(f);
                             return (
                               <div
                                 key={i}

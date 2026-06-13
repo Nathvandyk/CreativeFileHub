@@ -22,6 +22,10 @@ struct FileEntry {
     is_dir: bool,
     ext: String,
     last_modified: u64,
+    // The project this file belongs to: the folder holding its .uproject/.sln/.blend
+    // (resolved by walking up the tree). None when no project marker is found.
+    project_root: Option<String>,
+    project_name: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -97,6 +101,115 @@ fn is_interesting(ext: &str) -> bool {
     INTERESTING_EXTS.contains(&lower.as_str())
 }
 
+// ── Project-root resolution ───────────────────────────────────────────────────
+// Given a file, walk up its folders to find the directory that defines its
+// project, then use that folder's name as the project label. Each app family has
+// its own marker for what counts as a project root — add a row here to support a
+// new tool. "SelfContained" apps (a single document is the project) just use the
+// folder the file sits in.
+
+#[derive(PartialEq, Clone, Copy)]
+enum ProjKind {
+    Unreal,        // root = folder containing a *.uproject
+    Code,          // root = folder with *.sln/*.uproject/*.csproj or a VCS/package manifest
+    Godot,         // root = folder containing project.godot
+    Unity,         // root = folder containing a ProjectSettings dir (or *.sln)
+    SelfContained, // the file's own folder is the project (Blender, Photoshop, Premiere, …)
+    None,          // no project concept — group by the immediate folder
+}
+
+fn proj_kind(ext: &str) -> ProjKind {
+    match ext.to_lowercase().as_str() {
+        "uasset" | "umap" | "uproject" => ProjKind::Unreal,
+        "godot" | "tscn" | "tres" => ProjKind::Godot,
+        "unity" | "prefab" => ProjKind::Unity,
+        "blend" | "psd" | "psb" | "ai" | "xd" | "prproj" | "aep" => ProjKind::SelfContained,
+        "cpp" | "c" | "h" | "hpp" | "cs" | "rs" | "py" | "js" | "ts" | "tsx" | "jsx"
+        | "mjs" | "cjs" | "go" | "java" | "sln" | "csproj" | "vcxproj"
+        | "html" | "css" | "scss" | "json" | "toml" | "yaml" | "yml" | "sql" => ProjKind::Code,
+        _ => ProjKind::None,
+    }
+}
+
+fn dir_has_ext(dir: &std::path::Path, exts: &[&str]) -> bool {
+    let Ok(rd) = fs::read_dir(dir) else { return false; };
+    for entry in rd.flatten() {
+        if let Some(ext) = entry.path().extension() {
+            let e = ext.to_string_lossy().to_lowercase();
+            if exts.iter().any(|x| *x == e) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn dir_has_name(dir: &std::path::Path, names: &[&str]) -> bool {
+    let Ok(rd) = fs::read_dir(dir) else { return false; };
+    for entry in rd.flatten() {
+        let n = entry.file_name();
+        let n = n.to_string_lossy();
+        if names.iter().any(|x| x.eq_ignore_ascii_case(&n)) {
+            return true;
+        }
+    }
+    false
+}
+
+fn dir_is_project_root(dir: &std::path::Path, kind: ProjKind) -> bool {
+    match kind {
+        // The first dir checked is the file's own folder, so this resolves there.
+        ProjKind::SelfContained => true,
+        ProjKind::Unreal => dir_has_ext(dir, &["uproject"]),
+        ProjKind::Godot => dir_has_name(dir, &["project.godot"]),
+        ProjKind::Unity => dir_has_name(dir, &["ProjectSettings"]) || dir_has_ext(dir, &["sln"]),
+        ProjKind::Code => {
+            dir_has_ext(dir, &["sln", "uproject", "csproj"])
+                || dir_has_name(dir, &["Cargo.toml", "package.json", "pyproject.toml", "go.mod", ".git"])
+        }
+        ProjKind::None => false,
+    }
+}
+
+/// Walk up from a file looking for the directory that defines its project.
+/// Caches results per (kind, directory) so files sharing folders are cheap.
+fn find_project_root(
+    file: &std::path::Path,
+    kind: ProjKind,
+    cache: &mut HashMap<(u8, std::path::PathBuf), Option<std::path::PathBuf>>,
+) -> Option<std::path::PathBuf> {
+    if kind == ProjKind::None {
+        return None;
+    }
+    let kid = kind as u8;
+    let mut cur = file.parent().map(|p| p.to_path_buf());
+    let mut visited: Vec<std::path::PathBuf> = Vec::new();
+    let mut found: Option<std::path::PathBuf> = None;
+    let mut depth = 0;
+
+    while let Some(d) = cur {
+        if depth > 25 {
+            break;
+        }
+        if let Some(cached) = cache.get(&(kid, d.clone())) {
+            found = cached.clone();
+            break;
+        }
+        visited.push(d.clone());
+        if dir_is_project_root(&d, kind) {
+            found = Some(d.clone());
+            break;
+        }
+        cur = d.parent().map(|p| p.to_path_buf());
+        depth += 1;
+    }
+
+    for v in visited {
+        cache.entry((kid, v)).or_insert_with(|| found.clone());
+    }
+    found
+}
+
 #[tauri::command]
 fn list_drives() -> Vec<DriveInfo> {
     use sysinfo::Disks;
@@ -142,6 +255,8 @@ fn scan_directory(path: String, max_depth: u32) -> Vec<FileEntry> {
             is_dir: meta.is_dir(),
             ext: p.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default(),
             last_modified,
+            project_root: None,
+            project_name: None,
         });
         if entries.len() >= 5_000 {
             break;
@@ -199,6 +314,8 @@ fn get_recent_files(paths: Vec<String>, limit: usize) -> Vec<FileEntry> {
                 is_dir: false,
                 ext,
                 last_modified,
+                project_root: None,
+                project_name: None,
             });
             // Generous safety bound only — the recency filter keeps this small in practice,
             // so traversal reaches genuinely recent files instead of stopping early on junk.
@@ -210,6 +327,17 @@ fn get_recent_files(paths: Vec<String>, limit: usize) -> Vec<FileEntry> {
 
     files.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
     files.truncate(cap);
+
+    // Resolve each file's owning project so the UI can group by project. Done after
+    // truncation so we only walk the tree for the handful of files we actually return.
+    let mut cache: HashMap<(u8, std::path::PathBuf), Option<std::path::PathBuf>> = HashMap::new();
+    for f in &mut files {
+        if let Some(root) = find_project_root(std::path::Path::new(&f.path), proj_kind(&f.ext), &mut cache) {
+            f.project_name = root.file_name().map(|n| n.to_string_lossy().into_owned());
+            f.project_root = Some(root.to_string_lossy().into_owned());
+        }
+    }
+
     files
 }
 
@@ -260,6 +388,8 @@ fn get_project_files(path: String, limit: usize) -> Vec<FileEntry> {
             is_dir: false,
             ext,
             last_modified,
+            project_root: None,
+            project_name: None,
         });
         if files.len() >= 20_000 {
             break;
@@ -268,6 +398,15 @@ fn get_project_files(path: String, limit: usize) -> Vec<FileEntry> {
 
     files.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
     files.truncate(cap);
+
+    // Every file lives under the scanned project root — label them all with it.
+    let root_str = root.to_string_lossy().into_owned();
+    let root_name = root.file_name().map(|n| n.to_string_lossy().into_owned());
+    for f in &mut files {
+        f.project_root = Some(root_str.clone());
+        f.project_name = root_name.clone();
+    }
+
     files
 }
 
