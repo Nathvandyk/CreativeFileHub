@@ -572,10 +572,18 @@ struct ActivityEntry {
     first_seen: u64,
     last_seen: u64,
     sessions: u64,
+    // Total time (seconds) the app has been open with this project — accumulated
+    // across polls. Drives the "how much have I worked on this" progress bars.
+    #[serde(default)]
+    active_seconds: u64,
 }
 
 // A gap larger than this between sightings counts as a new working session.
 const SESSION_GAP_SECS: u64 = 10 * 60;
+
+// Only count the gap between two sightings as active time if it's this small,
+// i.e. the app was seen continuously (poll runs every 5s).
+const ACTIVE_CONTINUITY_SECS: u64 = 30;
 
 fn now_secs() -> u64 {
     std::time::SystemTime::now()
@@ -616,8 +624,13 @@ fn poll_activity(app: tauri::AppHandle) -> Vec<RunningApp> {
             .find(|e| e.app == r.app && e.project_path == r.project_path)
         {
             Some(e) => {
-                if now.saturating_sub(e.last_seen) > SESSION_GAP_SECS {
+                let gap = now.saturating_sub(e.last_seen);
+                if gap > SESSION_GAP_SECS {
                     e.sessions += 1;
+                }
+                // Accumulate active time only across continuous sightings.
+                if gap <= ACTIVE_CONTINUITY_SECS {
+                    e.active_seconds += gap;
                 }
                 e.last_seen = now;
                 if e.project.is_none() && r.project.is_some() {
@@ -632,6 +645,7 @@ fn poll_activity(app: tauri::AppHandle) -> Vec<RunningApp> {
                     first_seen: now,
                     last_seen: now,
                     sessions: 1,
+                    active_seconds: 0,
                 });
             }
         }

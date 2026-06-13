@@ -47,4 +47,5 @@ export interface ActivityEntry {
   first_seen: number;
   last_seen: number;
   sessions: number;
+  active_seconds: number;
 }

@@ -5,6 +5,24 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${sizes[i]}`;
 }
 
+export function formatDuration(seconds: number): string {
+  if (!seconds || seconds <= 0) return "—";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  if (m > 0) return `${m}m`;
+  return `${seconds}s`;
+}
+
+// Total active seconds per app, summed across all of that app's projects.
+export function activeSecondsByApp(
+  log: { app: string; active_seconds: number }[],
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const e of log) out[e.app] = (out[e.app] ?? 0) + (e.active_seconds ?? 0);
+  return out;
+}
+
 export function formatRelativeTime(unixSeconds: number): string {
   const diff = Math.floor(Date.now() / 1000) - unixSeconds;
   if (diff < 60)         return "Just now";

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppContext, useLive } from "../context/AppContext";
 import type { FileEntry, AppProfile } from "../types";
-import { formatBytes, formatRelativeTime, EXT_COLOR } from "../utils";
+import { formatBytes, formatRelativeTime, formatDuration, activeSecondsByApp, EXT_COLOR } from "../utils";
 
 const colorMap: Record<string, { bar: string; badge: string; ring: string }> = {
   orange:  { bar: "bg-orange-500",  badge: "bg-orange-900/30 text-orange-400",   ring: "border-orange-800"  },
@@ -68,7 +68,7 @@ function groupFiles(files: FileEntry[]): FileGroup[] {
 
 export default function Creative() {
   const { trackedApps, watchedPaths, refreshTick, appProfiles, recentFiles, recentLoading, triggerRefresh } = useAppContext();
-  const { runningApps } = useLive();
+  const { runningApps, activityLog } = useLive();
   const [projectFiles, setProjectFiles]     = useState<Record<string, FileEntry[]>>({});
   const [expanded, setExpanded]             = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -86,6 +86,10 @@ export default function Creative() {
   }, [runningApps, refreshTick]);
 
   const visibleApps = appProfiles.filter((p) => trackedApps.includes(p.name));
+
+  // Worked-time per app drives the progress bars (relative to the busiest app).
+  const activeByApp = activeSecondsByApp(activityLog);
+  const maxActive   = Math.max(1, ...visibleApps.map((a) => activeByApp[a.name] ?? 0));
 
   function filesForApp(p: AppProfile): FileEntry[] {
     const exts = p.extensions.map((e) => e.toLowerCase());
@@ -147,6 +151,8 @@ export default function Creative() {
           const projFiles  = running?.project_path ? (projectFiles[app.name] ?? []) : null;
           const appFiles   = projFiles && projFiles.length > 0 ? projFiles.slice(0, 40) : filesForApp(app);
           const groups     = groupFiles(appFiles);
+          const secs       = activeByApp[app.name] ?? 0;
+          const pct        = secs > 0 ? Math.max(4, Math.round((secs / maxActive) * 100)) : 0;
 
           return (
             <div
@@ -172,10 +178,10 @@ export default function Creative() {
                   </div>
                   <div className="flex items-center gap-2 mt-2">
                     <div className="flex-1 bg-zinc-800 rounded-full h-1.5">
-                      <div className={`${c.bar} h-1.5 rounded-full`} style={{ width: appFiles.length > 0 ? "60%" : "10%" }} />
+                      <div className={`${c.bar} h-1.5 rounded-full transition-all`} style={{ width: `${pct}%` }} />
                     </div>
                     <span className="text-xs text-zinc-500 shrink-0">
-                      {appFiles.length} file{appFiles.length !== 1 ? "s" : ""}
+                      {formatDuration(secs)} · {appFiles.length} file{appFiles.length !== 1 ? "s" : ""}
                       {groups.length > 1 ? ` · ${groups.length} projects` : ""}
                     </span>
                   </div>

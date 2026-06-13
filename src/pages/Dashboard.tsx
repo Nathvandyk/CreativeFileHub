@@ -2,32 +2,36 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppContext, useLive } from "../context/AppContext";
 import type { DriveInfo } from "../types";
-import { formatBytes, formatRelativeTime, extToApp, EXT_COLOR } from "../utils";
+import { formatBytes, formatRelativeTime, formatDuration, activeSecondsByApp, extToApp, EXT_COLOR } from "../utils";
 
 type Page = "dashboard" | "scanner" | "duplicates" | "organise" | "recent" | "creative" | "activity" | "applications";
 
-const APP_META: Record<string, { icon: string; color: string }> = {
-  "Blender":       { icon: "🟠", color: "bg-orange-500" },
-  "Unreal Engine": { icon: "🎮", color: "bg-purple-500" },
-  "VS Code":       { icon: "💙", color: "bg-blue-500"   },
-  "Visual Studio": { icon: "🔵", color: "bg-blue-700"   },
-  "Python":        { icon: "🐍", color: "bg-yellow-500" },
-  "Photoshop":     { icon: "🖼️", color: "bg-sky-500"    },
-  "Illustrator":   { icon: "✏️", color: "bg-orange-400" },
-  "Adobe XD":      { icon: "📐", color: "bg-pink-500"   },
-  "Premiere Pro":  { icon: "🎬", color: "bg-pink-600"   },
-  "After Effects": { icon: "🎞️", color: "bg-violet-500" },
-  "Godot":         { icon: "🎯", color: "bg-teal-500"   },
-  "Unity":         { icon: "⬛", color: "bg-zinc-400"   },
+// Palette name (from app_profiles.json) -> tailwind bar colour.
+const BAR_COLORS: Record<string, string> = {
+  orange: "bg-orange-500", purple: "bg-purple-500", blue: "bg-blue-500",
+  yellow: "bg-yellow-500", sky: "bg-sky-500", pink: "bg-pink-500",
+  violet: "bg-violet-500", teal: "bg-teal-500", green: "bg-green-500",
+  red: "bg-red-500", indigo: "bg-indigo-500", amber: "bg-amber-500",
+  lime: "bg-lime-500", fuchsia: "bg-fuchsia-500", rose: "bg-rose-500",
+  cyan: "bg-cyan-500", zinc: "bg-zinc-400",
 };
 
 export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => void }) {
-  const { trackedApps, watchedPaths, refreshTick, recentFiles: allRecent, recentLoading, triggerRefresh } = useAppContext();
+  const { trackedApps, watchedPaths, refreshTick, appProfiles, recentFiles: allRecent, recentLoading, triggerRefresh } = useAppContext();
   const { runningApps, activityLog } = useLive();
   const [drives, setDrives] = useState<DriveInfo[]>([]);
 
   const recentFiles  = allRecent.slice(0, 5);
   const loadingFiles = recentLoading;
+
+  const profileByName: Record<string, { icon: string; color: string }> = {};
+  appProfiles.forEach((p) => { profileByName[p.name] = { icon: p.icon, color: p.color }; });
+  const iconFor = (name: string) => profileByName[name]?.icon ?? "📦";
+  const barFor  = (name: string) => BAR_COLORS[profileByName[name]?.color ?? ""] ?? "bg-zinc-500";
+
+  // How much each tracked app has been worked on (total active seconds).
+  const activeByApp = activeSecondsByApp(activityLog);
+  const maxActive   = Math.max(1, ...trackedApps.map((a) => activeByApp[a] ?? 0));
 
   useEffect(() => {
     invoke<DriveInfo[]>("list_drives").then(setDrives).catch(() => {});
@@ -79,10 +83,9 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => voi
           </div>
           <div className="flex flex-col">
             {runningApps.map((r) => {
-              const meta = APP_META[r.app] ?? { icon: "📦", color: "bg-zinc-500" };
               return (
                 <div key={r.app} className="flex items-center gap-3 px-5 py-3 border-b border-zinc-800/50 last:border-0">
-                  <span className="text-xl shrink-0">{meta.icon}</span>
+                  <span className="text-xl shrink-0">{iconFor(r.app)}</span>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-white">{r.app}</p>
                     {r.project ? (
@@ -118,7 +121,6 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => voi
           </div>
           <div className="flex flex-col">
             {activityLog.slice(0, 5).map((e, i) => {
-              const meta    = APP_META[e.app] ?? { icon: "📦", color: "bg-zinc-500" };
               const running = runningApps.some((r) => r.app === e.app && r.project_path === e.project_path);
               return (
                 <div
@@ -126,7 +128,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => voi
                   onClick={() => onNavigate("activity")}
                   className="flex items-center gap-3 px-5 py-3 hover:bg-zinc-800/50 cursor-pointer transition-colors border-b border-zinc-800/50 last:border-0"
                 >
-                  <span className="text-lg shrink-0">{meta.icon}</span>
+                  <span className="text-lg shrink-0">{iconFor(e.app)}</span>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium text-white truncate">{e.project ?? e.app}</p>
                     <p className="text-xs text-zinc-600 truncate">{e.project ? e.app : `${e.sessions} session${e.sessions !== 1 ? "s" : ""}`}</p>
@@ -216,18 +218,22 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => voi
               </div>
             )}
             {trackedApps.map((appName, i) => {
-              const meta = APP_META[appName] ?? { icon: "📦", color: "bg-zinc-500" };
+              const secs = activeByApp[appName] ?? 0;
+              const pct  = Math.round((secs / maxActive) * 100);
               return (
                 <div
                   key={i}
                   onClick={() => onNavigate("creative")}
                   className="flex items-center gap-3 px-5 py-3 hover:bg-zinc-800/50 cursor-pointer transition-colors border-b border-zinc-800/50 last:border-0"
                 >
-                  <span className="text-lg shrink-0">{meta.icon}</span>
+                  <span className="text-lg shrink-0">{iconFor(appName)}</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-white">{appName}</p>
-                    <div className="w-full bg-zinc-800 rounded-full h-1 mt-1.5">
-                      <div className={`${meta.color} h-1 rounded-full w-1/3`} />
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-xs font-medium text-white">{appName}</p>
+                      <p className="text-xs text-zinc-500">{formatDuration(secs)}</p>
+                    </div>
+                    <div className="w-full bg-zinc-800 rounded-full h-1">
+                      <div className={`${barFor(appName)} h-1 rounded-full transition-all`} style={{ width: `${pct}%` }} />
                     </div>
                   </div>
                 </div>
