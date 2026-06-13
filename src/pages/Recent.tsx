@@ -1,29 +1,16 @@
-import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
 import { useAppContext } from "../context/AppContext";
-import type { FileEntry } from "../types";
 import { formatBytes, formatRelativeTime, extToApp, extToType, EXT_COLOR } from "../utils";
 
 type Filter = "all" | "code" | "creative";
 
 export default function Recent() {
-  const { trackedApps, watchedPaths, refreshTick, triggerRefresh } = useAppContext();
-  const [files, setFiles]       = useState<FileEntry[]>([]);
-  const [loading, setLoading]   = useState(false);
+  const { trackedApps, watchedPaths, recentFiles, recentLoading, triggerRefresh } = useAppContext();
   const [filter, setFilter]     = useState<Filter>("all");
   const [search, setSearch]     = useState("");
 
-  useEffect(() => {
-    if (watchedPaths.length === 0) {
-      setFiles([]);
-      return;
-    }
-    setLoading(true);
-    invoke<FileEntry[]>("get_recent_files", { paths: watchedPaths, limit: 50 })
-      .then(setFiles)
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [watchedPaths, refreshTick]);
+  const files   = recentFiles;
+  const loading = recentLoading;
 
   const visible = files.filter((f) => {
     const app      = extToApp(f.ext);

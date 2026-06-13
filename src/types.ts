@@ -24,6 +24,7 @@ export interface AppSettings {
 export interface AppProfile {
   name: string;
   icon: string;
+  color: string;
   category: string;
   extensions: string[];
   structure: string;

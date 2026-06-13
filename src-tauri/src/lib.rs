@@ -77,6 +77,8 @@ struct AppProfile {
     #[serde(default)]
     icon: String,
     #[serde(default)]
+    color: String,
+    #[serde(default)]
     category: String,
     extensions: Vec<String>,
     #[serde(default)]
@@ -508,9 +510,14 @@ fn extract_project_from_cmd(cmd: &[String], app: &str) -> Option<String> {
 }
 
 fn detect_running_apps() -> Vec<RunningApp> {
-    use sysinfo::System;
+    use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
 
-    let sys = System::new_all();
+    // Only load process names + command lines — not memory/disks/CPU/etc. This is
+    // far cheaper than System::new_all() and keeps the 5s poll from causing lag.
+    let sys = System::new_with_specifics(
+        RefreshKind::new()
+            .with_processes(ProcessRefreshKind::new().with_cmd(UpdateKind::Always)),
+    );
     let mut best: HashMap<String, RunningApp> = HashMap::new();
 
     for (_pid, process) in sys.processes() {

@@ -1,31 +1,55 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { AppSettings, RunningApp, ActivityEntry } from "../types";
+import type { AppSettings, RunningApp, ActivityEntry, AppProfile, FileEntry } from "../types";
 
-interface AppContextValue {
+// Data that changes rarely (settings, profiles, scanned recent files). Consumers
+// of this context do NOT re-render on the 5s live poll.
+interface DataContextValue {
   trackedApps: string[];
   watchedPaths: string[];
   refreshTick: number;
-  runningApps: RunningApp[];
-  activityLog: ActivityEntry[];
+  appProfiles: AppProfile[];
+  recentFiles: FileEntry[];
+  recentLoading: boolean;
   setTrackedApps: (apps: string[]) => void;
   setWatchedPaths: (paths: string[]) => void;
   triggerRefresh: () => void;
+}
+
+// Data that updates every few seconds (running apps + activity log). Only the
+// pages that show live state subscribe to this.
+interface LiveContextValue {
+  runningApps: RunningApp[];
+  activityLog: ActivityEntry[];
   clearActivityLog: () => void;
 }
 
-const AppContext = createContext<AppContextValue>({
+const DataContext = createContext<DataContextValue>({
   trackedApps: [],
   watchedPaths: [],
   refreshTick: 0,
-  runningApps: [],
-  activityLog: [],
+  appProfiles: [],
+  recentFiles: [],
+  recentLoading: false,
   setTrackedApps: () => {},
   setWatchedPaths: () => {},
   triggerRefresh: () => {},
+});
+
+const LiveContext = createContext<LiveContextValue>({
+  runningApps: [],
+  activityLog: [],
   clearActivityLog: () => {},
 });
+
+function sameRunning(a: RunningApp[], b: RunningApp[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].app !== b[i].app || a[i].project_path !== b[i].project_path) return false;
+  }
+  return true;
+}
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [trackedApps, setTrackedAppsState] = useState<string[]>([
@@ -33,83 +57,85 @@ export function AppProvider({ children }: { children: ReactNode }) {
   ]);
   const [watchedPaths, setWatchedPathsState] = useState<string[]>([]);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [appProfiles, setAppProfiles] = useState<AppProfile[]>([]);
+  const [recentFiles, setRecentFiles] = useState<FileEntry[]>([]);
+  const [recentLoading, setRecentLoading] = useState(false);
   const [runningApps, setRunningApps] = useState<RunningApp[]>([]);
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
 
+  // One-time: settings + the app knowledge base.
   useEffect(() => {
     invoke<AppSettings>("load_settings")
-      .then((s) => {
-        setTrackedAppsState(s.tracked_apps);
-        setWatchedPathsState(s.watched_paths);
-      })
+      .then((s) => { setTrackedAppsState(s.tracked_apps); setWatchedPathsState(s.watched_paths); })
       .catch(() => {});
+    invoke<AppProfile[]>("get_app_profiles").then(setAppProfiles).catch(() => {});
   }, []);
 
-  // Single source of truth for running-app detection + activity logging.
-  // Polls every 5s, records each open app/project to the persistent log,
-  // and exposes both live running apps and the accumulated history.
+  // Re-scan when the window regains focus (returning from another app).
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    getCurrentWindow()
+      .onFocusChanged(({ payload: focused }) => { if (focused) setRefreshTick((t) => t + 1); })
+      .then((fn) => { unlisten = fn; })
+      .catch(() => {});
+    return () => { unlisten?.(); };
+  }, []);
+
+  // Recent files are scanned once here and shared by every page (so switching
+  // tabs doesn't trigger a fresh whole-drive scan each time).
+  useEffect(() => {
+    if (watchedPaths.length === 0) { setRecentFiles([]); return; }
+    setRecentLoading(true);
+    invoke<FileEntry[]>("get_recent_files", { paths: watchedPaths, limit: 200 })
+      .then(setRecentFiles)
+      .catch(() => {})
+      .finally(() => setRecentLoading(false));
+  }, [watchedPaths, refreshTick]);
+
+  // Single 5s poller for running apps + activity log.
   useEffect(() => {
     let cancelled = false;
     async function tick() {
       try {
         const running = await invoke<RunningApp[]>("poll_activity");
         if (cancelled) return;
-        setRunningApps(running);
+        running.sort((a, b) => a.app.localeCompare(b.app));
+        setRunningApps((prev) => (sameRunning(prev, running) ? prev : running));
         const log = await invoke<ActivityEntry[]>("get_activity_log");
         if (!cancelled) setActivityLog(log);
-      } catch {
-        /* ignore */
-      }
+      } catch { /* ignore */ }
     }
     tick();
     const id = setInterval(tick, 5000);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  function clearActivityLog() {
-    invoke("clear_activity_log").then(() => setActivityLog([])).catch(() => {});
-  }
-
-  // Auto-refresh when the app window regains focus
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    getCurrentWindow()
-      .onFocusChanged(({ payload: focused }) => {
-        if (focused) setRefreshTick((t) => t + 1);
-      })
-      .then((fn) => { unlisten = fn; })
-      .catch(() => {});
-    return () => { unlisten?.(); };
-  }, []);
-
   function persist(apps: string[], paths: string[]) {
-    invoke("save_settings", {
-      settings: { tracked_apps: apps, watched_paths: paths },
-    }).catch(() => {});
+    invoke("save_settings", { settings: { tracked_apps: apps, watched_paths: paths } }).catch(() => {});
   }
+  function setTrackedApps(apps: string[]) { setTrackedAppsState(apps); persist(apps, watchedPaths); }
+  function setWatchedPaths(paths: string[]) { setWatchedPathsState(paths); persist(trackedApps, paths); }
+  function triggerRefresh() { setRefreshTick((t) => t + 1); }
+  function clearActivityLog() { invoke("clear_activity_log").then(() => setActivityLog([])).catch(() => {}); }
 
-  function setTrackedApps(apps: string[]) {
-    setTrackedAppsState(apps);
-    persist(apps, watchedPaths);
-  }
+  // Memoised so the live poll (runningApps/activityLog) doesn't churn data consumers.
+  const dataValue = useMemo<DataContextValue>(() => ({
+    trackedApps, watchedPaths, refreshTick, appProfiles, recentFiles, recentLoading,
+    setTrackedApps, setWatchedPaths, triggerRefresh,
+  }), [trackedApps, watchedPaths, refreshTick, appProfiles, recentFiles, recentLoading]);
 
-  function setWatchedPaths(paths: string[]) {
-    setWatchedPathsState(paths);
-    persist(trackedApps, paths);
-  }
-
-  function triggerRefresh() {
-    setRefreshTick((t) => t + 1);
-  }
+  const liveValue = useMemo<LiveContextValue>(() => ({
+    runningApps, activityLog, clearActivityLog,
+  }), [runningApps, activityLog]);
 
   return (
-    <AppContext.Provider value={{
-      trackedApps, watchedPaths, refreshTick, runningApps, activityLog,
-      setTrackedApps, setWatchedPaths, triggerRefresh, clearActivityLog,
-    }}>
-      {children}
-    </AppContext.Provider>
+    <DataContext.Provider value={dataValue}>
+      <LiveContext.Provider value={liveValue}>
+        {children}
+      </LiveContext.Provider>
+    </DataContext.Provider>
   );
 }
 
-export const useAppContext = () => useContext(AppContext);
+export const useAppContext = () => useContext(DataContext);
+export const useLive = () => useContext(LiveContext);

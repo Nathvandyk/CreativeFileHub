@@ -1,4 +1,4 @@
-import { useAppContext } from "../context/AppContext";
+import { useLive } from "../context/AppContext";
 import { formatRelativeTime } from "../utils";
 
 const APP_META: Record<string, { icon: string; color: string }> = {
@@ -19,7 +19,7 @@ function fullDate(unixSeconds: number): string {
 }
 
 export default function Activity() {
-  const { activityLog, runningApps, clearActivityLog } = useAppContext();
+  const { activityLog, runningApps, clearActivityLog } = useLive();
 
   const isRunning = (app: string, projectPath: string | null) =>
     runningApps.some((r) => r.app === app && r.project_path === projectPath);

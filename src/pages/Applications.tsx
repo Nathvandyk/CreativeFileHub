@@ -1,26 +1,24 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppContext } from "../context/AppContext";
-import type { DriveInfo, AppProfile } from "../types";
+import type { DriveInfo } from "../types";
 import { formatBytes } from "../utils";
 
 type KnownApp = { name: string; icon: string; category: string };
 
 export default function Applications() {
-  const { trackedApps, setTrackedApps, watchedPaths, setWatchedPaths } = useAppContext();
+  const { trackedApps, setTrackedApps, watchedPaths, setWatchedPaths, appProfiles } = useAppContext();
   const [drives, setDrives]       = useState<DriveInfo[]>([]);
-  const [knownApps, setKnownApps] = useState<KnownApp[]>([]);
   const [detected, setDetected]   = useState<string[]>([]);
   const [detecting, setDetecting] = useState(false);
   const [newPath, setNewPath]     = useState("");
 
   useEffect(() => {
     invoke<DriveInfo[]>("list_drives").then(setDrives).catch(() => {});
-    // The app list is driven by the backend knowledge base (app_profiles.json).
-    invoke<AppProfile[]>("get_app_profiles")
-      .then((ps) => setKnownApps(ps.map((p) => ({ name: p.name, icon: p.icon, category: p.category }))))
-      .catch(() => {});
   }, []);
+
+  // The app list is driven by the backend knowledge base (app_profiles.json).
+  const knownApps: KnownApp[] = appProfiles.map((p) => ({ name: p.name, icon: p.icon, category: p.category }));
 
   function toggleApp(name: string) {
     const next = trackedApps.includes(name)

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useAppContext } from "../context/AppContext";
-import type { DriveInfo, FileEntry } from "../types";
+import { useAppContext, useLive } from "../context/AppContext";
+import type { DriveInfo } from "../types";
 import { formatBytes, formatRelativeTime, extToApp, EXT_COLOR } from "../utils";
 
 type Page = "dashboard" | "scanner" | "duplicates" | "organise" | "recent" | "creative" | "activity" | "applications";
@@ -22,23 +22,16 @@ const APP_META: Record<string, { icon: string; color: string }> = {
 };
 
 export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => void }) {
-  const { trackedApps, watchedPaths, refreshTick, runningApps, activityLog, triggerRefresh } = useAppContext();
-  const [drives, setDrives]             = useState<DriveInfo[]>([]);
-  const [recentFiles, setRecentFiles]   = useState<FileEntry[]>([]);
-  const [loadingFiles, setLoadingFiles] = useState(false);
+  const { trackedApps, watchedPaths, refreshTick, recentFiles: allRecent, recentLoading, triggerRefresh } = useAppContext();
+  const { runningApps, activityLog } = useLive();
+  const [drives, setDrives] = useState<DriveInfo[]>([]);
+
+  const recentFiles  = allRecent.slice(0, 5);
+  const loadingFiles = recentLoading;
 
   useEffect(() => {
     invoke<DriveInfo[]>("list_drives").then(setDrives).catch(() => {});
   }, [refreshTick]);
-
-  useEffect(() => {
-    if (watchedPaths.length === 0) return;
-    setLoadingFiles(true);
-    invoke<FileEntry[]>("get_recent_files", { paths: watchedPaths, limit: 5 })
-      .then(setRecentFiles)
-      .catch(() => {})
-      .finally(() => setLoadingFiles(false));
-  }, [watchedPaths, refreshTick]);
 
   const totalBytes = drives.reduce((s, d) => s + d.total_bytes, 0);
   const usedBytes  = drives.reduce((s, d) => s + (d.total_bytes - d.free_bytes), 0);
