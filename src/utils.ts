@@ -1,3 +1,10 @@
+import { invoke } from "@tauri-apps/api/core";
+
+// Reveal a file (selected) or open a folder in the system file manager.
+export function openInExplorer(path: string) {
+  invoke("open_in_explorer", { path }).catch(() => {});
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
   const sizes = ["B", "KB", "MB", "GB", "TB"];

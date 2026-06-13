@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppContext, useLive } from "../context/AppContext";
+import { useContextMenu, ContextMenu } from "../components/ContextMenu";
 import type { FileEntry, AppProfile } from "../types";
-import { formatBytes, formatRelativeTime, formatDuration, activeSecondsByApp, EXT_COLOR } from "../utils";
+import { formatBytes, formatRelativeTime, formatDuration, activeSecondsByApp, EXT_COLOR, openInExplorer } from "../utils";
 
 const colorMap: Record<string, { bar: string; badge: string; ring: string }> = {
   orange:  { bar: "bg-orange-500",  badge: "bg-orange-900/30 text-orange-400",   ring: "border-orange-800"  },
@@ -69,6 +70,7 @@ function groupFiles(files: FileEntry[]): FileGroup[] {
 export default function Creative() {
   const { trackedApps, watchedPaths, refreshTick, appProfiles, recentFiles, recentLoading, triggerRefresh } = useAppContext();
   const { runningApps, activityLog } = useLive();
+  const { menu, open, close } = useContextMenu();
   const [projectFiles, setProjectFiles]     = useState<Record<string, FileEntry[]>>({});
   const [expanded, setExpanded]             = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -215,6 +217,9 @@ export default function Creative() {
                           {/* Project header — a collapsible dropdown */}
                           <button
                             onClick={() => toggleGroup(gkey)}
+                            onContextMenu={(e) => open(e, [
+                              { label: "Open project folder", icon: "📂", onClick: () => openInExplorer(group.key) },
+                            ])}
                             className="w-full flex items-center gap-2 px-5 py-2 bg-zinc-800/40 hover:bg-zinc-800/70 border-t border-zinc-800/50 text-left transition-colors"
                           >
                             <span className={`text-zinc-500 text-xs transition-transform ${collapsed ? "-rotate-90" : ""}`}>▾</span>
@@ -231,6 +236,9 @@ export default function Creative() {
                             return (
                               <div
                                 key={i}
+                                onContextMenu={(e) => open(e, [
+                                  { label: "Open file location", icon: "📂", onClick: () => openInExplorer(f.path) },
+                                ])}
                                 className="flex items-center justify-between pl-11 pr-5 py-2.5 hover:bg-zinc-800/50 transition-colors cursor-pointer border-t border-zinc-800/30"
                               >
                                 <div className="min-w-0 flex items-center gap-3">
@@ -261,6 +269,8 @@ export default function Creative() {
           );
         })}
       </div>
+
+      <ContextMenu menu={menu} onClose={close} />
     </div>
   );
 }

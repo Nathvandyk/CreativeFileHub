@@ -1,5 +1,6 @@
 import { useLive } from "../context/AppContext";
-import { formatRelativeTime } from "../utils";
+import { useContextMenu, ContextMenu } from "../components/ContextMenu";
+import { formatRelativeTime, openInExplorer } from "../utils";
 
 const APP_META: Record<string, { icon: string; color: string }> = {
   "Blender":       { icon: "🟠", color: "border-orange-800" },
@@ -20,6 +21,7 @@ function fullDate(unixSeconds: number): string {
 
 export default function Activity() {
   const { activityLog, runningApps, clearActivityLog } = useLive();
+  const { menu, open, close } = useContextMenu();
 
   const isRunning = (app: string, projectPath: string | null) =>
     runningApps.some((r) => r.app === app && r.project_path === projectPath);
@@ -54,6 +56,9 @@ export default function Activity() {
             return (
               <div
                 key={i}
+                onContextMenu={(ev) => e.project_path && open(ev, [
+                  { label: "Open project folder", icon: "📂", onClick: () => openInExplorer(e.project_path!) },
+                ])}
                 className={`flex items-center gap-4 bg-zinc-900 border rounded-xl px-5 py-4 transition-colors ${
                   running ? "border-green-800" : "border-zinc-800"
                 }`}
@@ -94,6 +99,8 @@ export default function Activity() {
           })}
         </div>
       )}
+
+      <ContextMenu menu={menu} onClose={close} />
     </div>
   );
 }

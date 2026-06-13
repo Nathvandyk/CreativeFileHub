@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useAppContext } from "../context/AppContext";
-import { formatBytes, formatRelativeTime, extToApp, extToType, EXT_COLOR } from "../utils";
+import { useContextMenu, ContextMenu } from "../components/ContextMenu";
+import { formatBytes, formatRelativeTime, extToApp, extToType, EXT_COLOR, openInExplorer } from "../utils";
 
 type Filter = "all" | "code" | "creative";
 
 export default function Recent() {
   const { trackedApps, watchedPaths, recentFiles, recentLoading, triggerRefresh } = useAppContext();
+  const { menu, open, close } = useContextMenu();
   const [filter, setFilter]     = useState<Filter>("all");
   const [search, setSearch]     = useState("");
 
@@ -78,6 +80,9 @@ export default function Recent() {
           {visible.map((f, i) => (
             <div
               key={i}
+              onContextMenu={(e) => open(e, [
+                { label: "Open file location", icon: "📂", onClick: () => openInExplorer(f.path) },
+              ])}
               className="flex items-center gap-4 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-xl px-5 py-3.5 cursor-pointer transition-colors group"
             >
               <span className={`text-xs font-mono font-bold px-2 py-1 rounded-md w-16 text-center shrink-0 ${EXT_COLOR[f.ext] ?? "bg-zinc-800 text-zinc-400"}`}>
@@ -105,6 +110,8 @@ export default function Recent() {
           )}
         </div>
       )}
+
+      <ContextMenu menu={menu} onClose={close} />
     </div>
   );
 }

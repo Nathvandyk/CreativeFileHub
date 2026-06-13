@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppContext, useLive } from "../context/AppContext";
+import { useContextMenu, ContextMenu } from "../components/ContextMenu";
 import type { DriveInfo } from "../types";
-import { formatBytes, formatRelativeTime, formatDuration, activeSecondsByApp, extToApp, EXT_COLOR } from "../utils";
+import { formatBytes, formatRelativeTime, formatDuration, activeSecondsByApp, extToApp, EXT_COLOR, openInExplorer } from "../utils";
 
 type Page = "dashboard" | "scanner" | "duplicates" | "organise" | "recent" | "creative" | "activity" | "applications";
 
@@ -19,6 +20,7 @@ const BAR_COLORS: Record<string, string> = {
 export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => void }) {
   const { trackedApps, watchedPaths, refreshTick, appProfiles, recentFiles: allRecent, recentLoading, triggerRefresh } = useAppContext();
   const { runningApps, activityLog } = useLive();
+  const { menu, open, close } = useContextMenu();
   const [drives, setDrives] = useState<DriveInfo[]>([]);
 
   const recentFiles  = allRecent.slice(0, 5);
@@ -126,6 +128,9 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => voi
                 <div
                   key={i}
                   onClick={() => onNavigate("activity")}
+                  onContextMenu={(ev) => e.project_path && open(ev, [
+                    { label: "Open project folder", icon: "📂", onClick: () => openInExplorer(e.project_path!) },
+                  ])}
                   className="flex items-center gap-3 px-5 py-3 hover:bg-zinc-800/50 cursor-pointer transition-colors border-b border-zinc-800/50 last:border-0"
                 >
                   <span className="text-lg shrink-0">{iconFor(e.app)}</span>
@@ -179,6 +184,9 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => voi
               <div
                 key={i}
                 onClick={() => onNavigate("recent")}
+                onContextMenu={(e) => open(e, [
+                  { label: "Open file location", icon: "📂", onClick: () => openInExplorer(f.path) },
+                ])}
                 className="flex items-center gap-3 px-5 py-3 hover:bg-zinc-800/50 cursor-pointer transition-colors border-b border-zinc-800/50 last:border-0"
               >
                 <span className={`text-xs font-mono font-bold px-1.5 py-0.5 rounded shrink-0 ${EXT_COLOR[f.ext] ?? "bg-zinc-800 text-zinc-400"}`}>
@@ -307,6 +315,8 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => voi
           </button>
         </div>
       </div>
+
+      <ContextMenu menu={menu} onClose={close} />
     </div>
   );
 }

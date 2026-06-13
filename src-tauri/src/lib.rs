@@ -667,6 +667,35 @@ fn clear_activity_log(app: tauri::AppHandle) {
     write_activity_log(&app, &[]);
 }
 
+/// Open a path in the system file manager. On Windows: a file is revealed with it
+/// selected; a folder (or a file's parent) is opened directly.
+#[tauri::command]
+fn open_in_explorer(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = std::process::Command::new("explorer");
+        if p.is_file() {
+            cmd.raw_arg(format!("/select,\"{}\"", p.display()));
+        } else {
+            let dir = if p.is_dir() {
+                p.to_path_buf()
+            } else {
+                p.parent().map(|x| x.to_path_buf()).unwrap_or_else(|| p.to_path_buf())
+            };
+            cmd.raw_arg(format!("\"{}\"", dir.display()));
+        }
+        cmd.spawn().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = p;
+        Err("Opening the file manager is only supported on Windows.".into())
+    }
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -690,6 +719,7 @@ pub fn run() {
             poll_activity,
             get_activity_log,
             clear_activity_log,
+            open_in_explorer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
