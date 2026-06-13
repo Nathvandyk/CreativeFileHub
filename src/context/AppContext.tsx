@@ -1,6 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { AppSettings, RunningApp, ActivityEntry, AppProfile, FileEntry } from "../types";
 
 // Data that changes rarely (settings, profiles, scanned recent files). Consumers
@@ -69,16 +68,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .then((s) => { setTrackedAppsState(s.tracked_apps); setWatchedPathsState(s.watched_paths); })
       .catch(() => {});
     invoke<AppProfile[]>("get_app_profiles").then(setAppProfiles).catch(() => {});
-  }, []);
-
-  // Re-scan when the window regains focus (returning from another app).
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    getCurrentWindow()
-      .onFocusChanged(({ payload: focused }) => { if (focused) setRefreshTick((t) => t + 1); })
-      .then((fn) => { unlisten = fn; })
-      .catch(() => {});
-    return () => { unlisten?.(); };
   }, []);
 
   // Recent files are scanned once here and shared by every page (so switching
