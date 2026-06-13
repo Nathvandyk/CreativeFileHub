@@ -21,6 +21,18 @@ export interface AppSettings {
   watched_paths: string[];
 }
 
+export interface AppProfile {
+  name: string;
+  icon: string;
+  category: string;
+  extensions: string[];
+  structure: string;
+  self_contained: boolean;
+  root_marker_exts: string[];
+  root_marker_files: string[];
+  notes: string;
+}
+
 export interface RunningApp {
   app: string;
   project: string | null;

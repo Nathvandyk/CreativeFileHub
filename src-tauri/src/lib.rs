@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
+use std::sync::OnceLock;
 use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -65,78 +66,92 @@ fn should_skip(name: &str) -> bool {
     SKIP_DIRS.iter().any(|s| s.eq_ignore_ascii_case(name))
 }
 
-fn ext_to_app(ext: &str) -> Option<&'static str> {
-    match ext.to_lowercase().as_str() {
-        "blend"                       => Some("Blender"),
-        "uproject" | "uasset" | "umap" => Some("Unreal Engine"),
-        "sln" | "csproj" | "vcxproj"  => Some("Visual Studio"),
-        "py"                          => Some("Python"),
-        "js" | "ts" | "tsx" | "jsx" | "mjs" | "cjs" => Some("VS Code"),
-        "psd" | "psb"                 => Some("Photoshop"),
-        "ai"                          => Some("Illustrator"),
-        "xd"                          => Some("Adobe XD"),
-        "prproj"                      => Some("Premiere Pro"),
-        "aep"                         => Some("After Effects"),
-        "godot" | "tscn" | "tres"    => Some("Godot"),
-        "unity" | "prefab"            => Some("Unity"),
-        _ => None,
-    }
+// ── App profiles (knowledge base) ─────────────────────────────────────────────
+// Loaded from app_profiles.json (embedded at build time). This is the single
+// source of truth for which files matter, which app owns them, and how to locate
+// a file's project root. Add a tool there — not here.
+
+#[derive(Deserialize, Serialize, Clone)]
+struct AppProfile {
+    name: String,
+    #[serde(default)]
+    icon: String,
+    #[serde(default)]
+    category: String,
+    extensions: Vec<String>,
+    #[serde(default)]
+    structure: String,
+    #[serde(default)]
+    self_contained: bool,
+    #[serde(default)]
+    root_marker_exts: Vec<String>,
+    #[serde(default)]
+    root_marker_files: Vec<String>,
+    #[serde(default)]
+    notes: String,
 }
 
-const INTERESTING_EXTS: &[&str] = &[
-    "blend", "uproject", "uasset", "umap",
-    "sln", "csproj", "vcxproj",
-    "py", "js", "ts", "tsx", "jsx", "mjs",
-    "psd", "psb", "ai", "xd",
-    "prproj", "aep",
-    "godot", "tscn", "tres",
-    "unity", "prefab",
-    "rs", "cpp", "c", "h", "hpp", "cs", "java", "go",
-    "html", "css", "scss", "json", "toml", "yaml", "yml", "sql",
-    "md", "txt",
-];
+#[derive(Deserialize)]
+struct ProfileFile {
+    #[serde(default)]
+    apps: Vec<AppProfile>,
+}
+
+static PROFILES: OnceLock<Vec<AppProfile>> = OnceLock::new();
+static EXT_INDEX: OnceLock<HashMap<String, usize>> = OnceLock::new();
+
+fn profiles() -> &'static Vec<AppProfile> {
+    PROFILES.get_or_init(|| {
+        serde_json::from_str::<ProfileFile>(include_str!("../app_profiles.json"))
+            .map(|f| f.apps)
+            .unwrap_or_default()
+    })
+}
+
+// ext (lowercased) -> index into profiles(); first profile to claim an ext wins.
+fn ext_index() -> &'static HashMap<String, usize> {
+    EXT_INDEX.get_or_init(|| {
+        let mut m = HashMap::new();
+        for (i, p) in profiles().iter().enumerate() {
+            for e in &p.extensions {
+                m.entry(e.to_lowercase()).or_insert(i);
+            }
+        }
+        m
+    })
+}
+
+fn profile_for_ext(ext: &str) -> Option<&'static AppProfile> {
+    ext_index().get(&ext.to_lowercase()).map(|&i| &profiles()[i])
+}
+
+fn ext_to_app(ext: &str) -> Option<&'static str> {
+    profile_for_ext(ext).map(|p| p.name.as_str())
+}
 
 fn is_interesting(ext: &str) -> bool {
-    let lower = ext.to_lowercase();
-    INTERESTING_EXTS.contains(&lower.as_str())
+    ext_index().contains_key(&ext.to_lowercase())
+}
+
+#[tauri::command]
+fn get_app_profiles() -> Vec<AppProfile> {
+    profiles().clone()
 }
 
 // ── Project-root resolution ───────────────────────────────────────────────────
-// Given a file, walk up its folders to find the directory that defines its
-// project, then use that folder's name as the project label. Each app family has
-// its own marker for what counts as a project root — add a row here to support a
-// new tool. "SelfContained" apps (a single document is the project) just use the
-// folder the file sits in.
+// Walk up from a file to the folder that defines its project, using the markers
+// declared in that file's app profile (app_profiles.json). Self-contained apps
+// (Blender, Photoshop…) use the file's own folder. Cached per (profile, directory).
 
-#[derive(PartialEq, Clone, Copy)]
-enum ProjKind {
-    Unreal,        // root = folder containing a *.uproject
-    Code,          // root = folder with *.sln/*.uproject/*.csproj or a VCS/package manifest
-    Godot,         // root = folder containing project.godot
-    Unity,         // root = folder containing a ProjectSettings dir (or *.sln)
-    SelfContained, // the file's own folder is the project (Blender, Photoshop, Premiere, …)
-    None,          // no project concept — group by the immediate folder
-}
-
-fn proj_kind(ext: &str) -> ProjKind {
-    match ext.to_lowercase().as_str() {
-        "uasset" | "umap" | "uproject" => ProjKind::Unreal,
-        "godot" | "tscn" | "tres" => ProjKind::Godot,
-        "unity" | "prefab" => ProjKind::Unity,
-        "blend" | "psd" | "psb" | "ai" | "xd" | "prproj" | "aep" => ProjKind::SelfContained,
-        "cpp" | "c" | "h" | "hpp" | "cs" | "rs" | "py" | "js" | "ts" | "tsx" | "jsx"
-        | "mjs" | "cjs" | "go" | "java" | "sln" | "csproj" | "vcxproj"
-        | "html" | "css" | "scss" | "json" | "toml" | "yaml" | "yml" | "sql" => ProjKind::Code,
-        _ => ProjKind::None,
+fn dir_has_ext(dir: &std::path::Path, exts: &[String]) -> bool {
+    if exts.is_empty() {
+        return false;
     }
-}
-
-fn dir_has_ext(dir: &std::path::Path, exts: &[&str]) -> bool {
     let Ok(rd) = fs::read_dir(dir) else { return false; };
     for entry in rd.flatten() {
         if let Some(ext) = entry.path().extension() {
             let e = ext.to_string_lossy().to_lowercase();
-            if exts.iter().any(|x| *x == e) {
+            if exts.iter().any(|x| x.to_lowercase() == e) {
                 return true;
             }
         }
@@ -144,7 +159,10 @@ fn dir_has_ext(dir: &std::path::Path, exts: &[&str]) -> bool {
     false
 }
 
-fn dir_has_name(dir: &std::path::Path, names: &[&str]) -> bool {
+fn dir_has_file(dir: &std::path::Path, names: &[String]) -> bool {
+    if names.is_empty() {
+        return false;
+    }
     let Ok(rd) = fs::read_dir(dir) else { return false; };
     for entry in rd.flatten() {
         let n = entry.file_name();
@@ -156,32 +174,24 @@ fn dir_has_name(dir: &std::path::Path, names: &[&str]) -> bool {
     false
 }
 
-fn dir_is_project_root(dir: &std::path::Path, kind: ProjKind) -> bool {
-    match kind {
-        // The first dir checked is the file's own folder, so this resolves there.
-        ProjKind::SelfContained => true,
-        ProjKind::Unreal => dir_has_ext(dir, &["uproject"]),
-        ProjKind::Godot => dir_has_name(dir, &["project.godot"]),
-        ProjKind::Unity => dir_has_name(dir, &["ProjectSettings"]) || dir_has_ext(dir, &["sln"]),
-        ProjKind::Code => {
-            dir_has_ext(dir, &["sln", "uproject", "csproj"])
-                || dir_has_name(dir, &["Cargo.toml", "package.json", "pyproject.toml", "go.mod", ".git"])
-        }
-        ProjKind::None => false,
-    }
+fn dir_is_project_root(dir: &std::path::Path, profile: &AppProfile) -> bool {
+    dir_has_ext(dir, &profile.root_marker_exts) || dir_has_file(dir, &profile.root_marker_files)
 }
 
-/// Walk up from a file looking for the directory that defines its project.
-/// Caches results per (kind, directory) so files sharing folders are cheap.
+/// Walk up from a file looking for the directory that defines its project, per the
+/// profile's markers. Caches results per (profile, directory) so files sharing
+/// folders are cheap.
 fn find_project_root(
     file: &std::path::Path,
-    kind: ProjKind,
-    cache: &mut HashMap<(u8, std::path::PathBuf), Option<std::path::PathBuf>>,
+    profile_idx: usize,
+    profile: &AppProfile,
+    cache: &mut HashMap<(usize, std::path::PathBuf), Option<std::path::PathBuf>>,
 ) -> Option<std::path::PathBuf> {
-    if kind == ProjKind::None {
-        return None;
+    // A single document is its own project — no need to walk.
+    if profile.self_contained {
+        return file.parent().map(|p| p.to_path_buf());
     }
-    let kid = kind as u8;
+
     let mut cur = file.parent().map(|p| p.to_path_buf());
     let mut visited: Vec<std::path::PathBuf> = Vec::new();
     let mut found: Option<std::path::PathBuf> = None;
@@ -191,12 +201,12 @@ fn find_project_root(
         if depth > 25 {
             break;
         }
-        if let Some(cached) = cache.get(&(kid, d.clone())) {
+        if let Some(cached) = cache.get(&(profile_idx, d.clone())) {
             found = cached.clone();
             break;
         }
         visited.push(d.clone());
-        if dir_is_project_root(&d, kind) {
+        if dir_is_project_root(&d, profile) {
             found = Some(d.clone());
             break;
         }
@@ -205,7 +215,7 @@ fn find_project_root(
     }
 
     for v in visited {
-        cache.entry((kid, v)).or_insert_with(|| found.clone());
+        cache.entry((profile_idx, v)).or_insert_with(|| found.clone());
     }
     found
 }
@@ -330,11 +340,14 @@ fn get_recent_files(paths: Vec<String>, limit: usize) -> Vec<FileEntry> {
 
     // Resolve each file's owning project so the UI can group by project. Done after
     // truncation so we only walk the tree for the handful of files we actually return.
-    let mut cache: HashMap<(u8, std::path::PathBuf), Option<std::path::PathBuf>> = HashMap::new();
+    let mut cache: HashMap<(usize, std::path::PathBuf), Option<std::path::PathBuf>> = HashMap::new();
     for f in &mut files {
-        if let Some(root) = find_project_root(std::path::Path::new(&f.path), proj_kind(&f.ext), &mut cache) {
-            f.project_name = root.file_name().map(|n| n.to_string_lossy().into_owned());
-            f.project_root = Some(root.to_string_lossy().into_owned());
+        if let Some(idx) = ext_index().get(&f.ext.to_lowercase()).copied() {
+            let profile = &profiles()[idx];
+            if let Some(root) = find_project_root(std::path::Path::new(&f.path), idx, profile, &mut cache) {
+                f.project_name = root.file_name().map(|n| n.to_string_lossy().into_owned());
+                f.project_root = Some(root.to_string_lossy().into_owned());
+            }
         }
     }
 
@@ -649,6 +662,7 @@ pub fn run() {
             get_recent_files,
             get_project_files,
             detect_apps,
+            get_app_profiles,
             load_settings,
             save_settings,
             get_running_apps,

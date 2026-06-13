@@ -1,0 +1,137 @@
+{
+  "about": "Knowledge base of creative-app project conventions. The backend reads this at build time to decide (a) which files are interesting, (b) which app a file belongs to, and (c) how to find a file's project root. To support a new tool, add an entry here — no Rust changes needed. Fields: name, icon, category, extensions (file types this app owns), structure ('nested' = projects contain deep subfolders, 'flat' = one document is the project), self_contained (true => the file's own folder IS the project; walking up is skipped), root_marker_exts (a folder is the project root if it directly contains a file with one of these extensions), root_marker_files (a folder is the project root if it directly contains a file/dir with one of these exact names), notes (research summary of the on-disk layout).",
+  "apps": [
+    {
+      "name": "Unreal Engine",
+      "icon": "🎮",
+      "category": "Game Development",
+      "extensions": ["uproject", "uasset", "umap", "uplugin"],
+      "structure": "nested",
+      "self_contained": false,
+      "root_marker_exts": ["uproject"],
+      "root_marker_files": [],
+      "notes": "Project root holds <Name>.uproject (and a .sln for C++ projects). Assets live under Content/, C++ under Source/, settings in Config/. Build output in Binaries/, Intermediate/, Saved/, DerivedDataCache/. Deeply nested."
+    },
+    {
+      "name": "Unity",
+      "icon": "⬛",
+      "category": "Game Development",
+      "extensions": ["unity", "prefab", "asset", "mat"],
+      "structure": "nested",
+      "self_contained": false,
+      "root_marker_exts": ["sln"],
+      "root_marker_files": ["ProjectSettings", "Assets"],
+      "notes": "Project root holds Assets/, ProjectSettings/, Packages/ (and Library/ cache). Scenes (.unity), prefabs and materials live under Assets/. Nested."
+    },
+    {
+      "name": "Godot",
+      "icon": "🎯",
+      "category": "Game Development",
+      "extensions": ["godot", "tscn", "tres", "gd"],
+      "structure": "nested",
+      "self_contained": false,
+      "root_marker_exts": [],
+      "root_marker_files": ["project.godot"],
+      "notes": "Project root holds project.godot. Scenes (.tscn), resources (.tres) and GDScript (.gd) sit at or below the root. Nested."
+    },
+    {
+      "name": "Visual Studio",
+      "icon": "🔵",
+      "category": "IDE",
+      "extensions": ["sln", "csproj", "vcxproj"],
+      "structure": "nested",
+      "self_contained": false,
+      "root_marker_exts": ["sln", "csproj", "vcxproj"],
+      "root_marker_files": [],
+      "notes": "A .sln at the root references one or more .csproj/.vcxproj projects, each usually in its own subfolder. Nested."
+    },
+    {
+      "name": "VS Code",
+      "icon": "💙",
+      "category": "Code Editor",
+      "extensions": ["js", "ts", "tsx", "jsx", "mjs", "cjs", "rs", "cpp", "c", "h", "hpp", "cs", "go", "java", "html", "css", "scss", "json", "yaml", "yml", "toml", "sql", "md", "txt"],
+      "structure": "nested",
+      "self_contained": false,
+      "root_marker_exts": ["sln", "uproject", "csproj"],
+      "root_marker_files": ["package.json", "Cargo.toml", "pyproject.toml", "go.mod", ".git", ".vscode"],
+      "notes": "Generic code workspace. The project root is the nearest folder marked by a VCS/package manifest (.git, package.json, Cargo.toml, pyproject.toml, go.mod) or a .vscode folder. Nested."
+    },
+    {
+      "name": "Python",
+      "icon": "🐍",
+      "category": "Language",
+      "extensions": ["py"],
+      "structure": "nested",
+      "self_contained": false,
+      "root_marker_exts": [],
+      "root_marker_files": ["pyproject.toml", "setup.py", "requirements.txt", ".git"],
+      "notes": "Scripts may be standalone or part of a package. Project root is marked by pyproject.toml/setup.py/requirements.txt or .git; lone scripts fall back to their own folder."
+    },
+    {
+      "name": "Blender",
+      "icon": "🟠",
+      "category": "3D / Animation",
+      "extensions": ["blend"],
+      "structure": "flat",
+      "self_contained": true,
+      "root_marker_exts": [],
+      "root_marker_files": [],
+      "notes": "A .blend is a self-contained project file — Blender does not enforce a project tree (textures may sit alongside via relative // paths). The folder the .blend lives in is the project. Flat."
+    },
+    {
+      "name": "Photoshop",
+      "icon": "🖼️",
+      "category": "Image Editing",
+      "extensions": ["psd", "psb"],
+      "structure": "flat",
+      "self_contained": true,
+      "root_marker_exts": [],
+      "root_marker_files": [],
+      "notes": "Standalone .psd/.psb documents. No project tree — the containing folder is the project. Flat."
+    },
+    {
+      "name": "Illustrator",
+      "icon": "✏️",
+      "category": "Vector Design",
+      "extensions": ["ai"],
+      "structure": "flat",
+      "self_contained": true,
+      "root_marker_exts": [],
+      "root_marker_files": [],
+      "notes": "Standalone .ai documents. The containing folder is the project. Flat."
+    },
+    {
+      "name": "Adobe XD",
+      "icon": "📐",
+      "category": "UI Design",
+      "extensions": ["xd"],
+      "structure": "flat",
+      "self_contained": true,
+      "root_marker_exts": [],
+      "root_marker_files": [],
+      "notes": "Standalone .xd documents. The containing folder is the project. Flat."
+    },
+    {
+      "name": "Premiere Pro",
+      "icon": "🎬",
+      "category": "Video Editing",
+      "extensions": ["prproj"],
+      "structure": "flat",
+      "self_contained": true,
+      "root_marker_exts": [],
+      "root_marker_files": [],
+      "notes": "A .prproj project file references external media, usually in sibling folders. The .prproj's own folder is treated as the project. Flat."
+    },
+    {
+      "name": "After Effects",
+      "icon": "🎞️",
+      "category": "Motion Graphics",
+      "extensions": ["aep"],
+      "structure": "flat",
+      "self_contained": true,
+      "root_marker_exts": [],
+      "root_marker_files": [],
+      "notes": "An .aep project file references footage from sibling folders. The .aep's own folder is treated as the project. Flat."
+    }
+  ]
+}

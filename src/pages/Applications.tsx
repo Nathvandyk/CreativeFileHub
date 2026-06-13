@@ -1,33 +1,25 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppContext } from "../context/AppContext";
-import type { DriveInfo } from "../types";
+import type { DriveInfo, AppProfile } from "../types";
 import { formatBytes } from "../utils";
 
-const ALL_KNOWN_APPS = [
-  { name: "Blender",       icon: "🟠", category: "3D / Animation"   },
-  { name: "Unreal Engine", icon: "🎮", category: "Game Development" },
-  { name: "VS Code",       icon: "💙", category: "Code Editor"      },
-  { name: "Visual Studio", icon: "🔵", category: "IDE"              },
-  { name: "Python",        icon: "🐍", category: "Language"         },
-  { name: "Photoshop",     icon: "🖼️", category: "Image Editing"    },
-  { name: "Illustrator",   icon: "✏️", category: "Vector Design"    },
-  { name: "Adobe XD",      icon: "📐", category: "UI Design"        },
-  { name: "Premiere Pro",  icon: "🎬", category: "Video Editing"    },
-  { name: "After Effects", icon: "🎞️", category: "Motion Graphics"  },
-  { name: "Godot",         icon: "🎯", category: "Game Development" },
-  { name: "Unity",         icon: "⬛", category: "Game Development" },
-];
+type KnownApp = { name: string; icon: string; category: string };
 
 export default function Applications() {
   const { trackedApps, setTrackedApps, watchedPaths, setWatchedPaths } = useAppContext();
   const [drives, setDrives]       = useState<DriveInfo[]>([]);
+  const [knownApps, setKnownApps] = useState<KnownApp[]>([]);
   const [detected, setDetected]   = useState<string[]>([]);
   const [detecting, setDetecting] = useState(false);
   const [newPath, setNewPath]     = useState("");
 
   useEffect(() => {
     invoke<DriveInfo[]>("list_drives").then(setDrives).catch(() => {});
+    // The app list is driven by the backend knowledge base (app_profiles.json).
+    invoke<AppProfile[]>("get_app_profiles")
+      .then((ps) => setKnownApps(ps.map((p) => ({ name: p.name, icon: p.icon, category: p.category }))))
+      .catch(() => {});
   }, []);
 
   function toggleApp(name: string) {
@@ -69,10 +61,10 @@ export default function Applications() {
   }
 
   const extraApps = detected
-    .filter((d) => !ALL_KNOWN_APPS.find((a) => a.name === d))
+    .filter((d) => !knownApps.find((a) => a.name === d))
     .map((d) => ({ name: d, icon: "📦", category: "Detected" }));
 
-  const displayApps = [...ALL_KNOWN_APPS, ...extraApps];
+  const displayApps = [...knownApps, ...extraApps];
 
   return (
     <div className="max-w-4xl mx-auto">
