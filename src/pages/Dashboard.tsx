@@ -86,7 +86,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => voi
           <div className="flex flex-col">
             {runningApps.map((r) => {
               return (
-                <div key={r.app} className="flex items-center gap-3 px-5 py-3 border-b border-zinc-800/50 last:border-0">
+                <div key={`${r.app}::${r.project_path ?? ""}`} className="flex items-center gap-3 px-5 py-3 border-b border-zinc-800/50 last:border-0">
                   <span className="text-xl shrink-0">{iconFor(r.app)}</span>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-white">{r.app}</p>

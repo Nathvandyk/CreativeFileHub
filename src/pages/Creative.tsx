@@ -67,6 +67,19 @@ function groupFiles(files: FileEntry[]): FileGroup[] {
   return groups;
 }
 
+// Combine several file lists, de-duplicating by path and sorting newest-first.
+function mergeFiles(...lists: FileEntry[][]): FileEntry[] {
+  const seen = new Set<string>();
+  const out: FileEntry[] = [];
+  for (const list of lists) {
+    for (const f of list) {
+      if (!seen.has(f.path)) { seen.add(f.path); out.push(f); }
+    }
+  }
+  out.sort((a, b) => b.last_modified - a.last_modified);
+  return out;
+}
+
 export default function Creative() {
   const { trackedApps, watchedPaths, refreshTick, appProfiles, recentFiles, recentLoading, triggerRefresh } = useAppContext();
   const { runningApps, activityLog } = useLive();
@@ -75,13 +88,14 @@ export default function Creative() {
   const [expanded, setExpanded]             = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
-  // Pull each open project's files. runningApps keeps a stable reference between
-  // polls unless the running set actually changes, so this won't refire every 5s.
+  // Pull each open project's files, keyed by project path so multiple open
+  // instances of the same app (e.g. two Blender scenes) are each fetched.
   useEffect(() => {
     runningApps.forEach((r) => {
       if (r.project_path) {
-        invoke<FileEntry[]>("get_project_files", { path: r.project_path, limit: 40 })
-          .then((files) => setProjectFiles((prev) => ({ ...prev, [r.app]: files })))
+        const key = r.project_path;
+        invoke<FileEntry[]>("get_project_files", { path: key, limit: 40 })
+          .then((files) => setProjectFiles((prev) => ({ ...prev, [key]: files })))
           .catch(() => {});
       }
     });
@@ -149,10 +163,18 @@ export default function Creative() {
         {visibleApps.map((app) => {
           const c          = colorMap[app.color] ?? colorMap.zinc;
           const isExpanded = expanded === app.name;
-          const running    = runningApps.find((r) => r.app === app.name);
-          const projFiles  = running?.project_path ? (projectFiles[app.name] ?? []) : null;
-          const appFiles   = projFiles && projFiles.length > 0 ? projFiles.slice(0, 40) : filesForApp(app);
+          // Every open window of this app (multiple instances supported).
+          const instances  = runningApps.filter((r) => r.app === app.name);
+          const running    = instances.length > 0;
+          // Files from the open projects, merged with everything recently worked on.
+          const liveFiles  = instances.flatMap((r) => (r.project_path ? (projectFiles[r.project_path] ?? []) : []));
+          const appFiles   = mergeFiles(liveFiles, filesForApp(app)).slice(0, 40);
           const groups     = groupFiles(appFiles);
+          const openRoots  = new Set(
+            instances.map((r) => (r.project_path ? parentDir(r.project_path) : "")).filter(Boolean),
+          );
+          const openNames  = instances.map((r) => r.project).filter(Boolean) as string[];
+          const openLabel  = openNames.length > 0 ? `Open: ${openNames.join(", ")}` : "Running";
           const secs       = activeByApp[app.name] ?? 0;
           const pct        = secs > 0 ? Math.max(4, Math.round((secs / maxActive) * 100)) : 0;
 
@@ -174,7 +196,7 @@ export default function Creative() {
                     {running && (
                       <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-green-900/30 text-green-400">
                         <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                        {running.project ? `Open: ${running.project}` : "Running"}
+                        {openLabel}
                       </span>
                     )}
                   </div>
@@ -228,6 +250,12 @@ export default function Creative() {
                             <span className="text-xs text-zinc-600 shrink-0">
                               · {group.files.length} file{group.files.length !== 1 ? "s" : ""}
                             </span>
+                            {openRoots.has(group.key) && (
+                              <span className="flex items-center gap-1 text-xs text-green-400 shrink-0 ml-auto">
+                                <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                                open now
+                              </span>
+                            )}
                           </button>
 
                           {/* Files nested under the project */}

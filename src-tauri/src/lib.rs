@@ -518,7 +518,9 @@ fn detect_running_apps() -> Vec<RunningApp> {
         RefreshKind::new()
             .with_processes(ProcessRefreshKind::new().with_cmd(UpdateKind::Always)),
     );
-    let mut best: HashMap<String, RunningApp> = HashMap::new();
+    // One entry per (app, project) so multiple open windows of the same app
+    // (e.g. two Blender scenes) are each tracked, not collapsed into one.
+    let mut found: Vec<RunningApp> = Vec::new();
 
     for (_pid, process) in sys.processes() {
         // name() may return &str or &OsStr depending on sysinfo version — normalise via OsStr
@@ -542,21 +544,21 @@ fn detect_running_apps() -> Vec<RunningApp> {
                     .and_then(|p| std::path::Path::new(p).file_stem())
                     .map(|s| s.to_string_lossy().to_string());
 
-                let entry = best.entry(app_name.to_string()).or_insert(RunningApp {
-                    app: app_name.to_string(),
-                    project: None,
-                    project_path: None,
-                });
-
-                if entry.project_path.is_none() && project_path.is_some() {
-                    entry.project = project_name;
-                    entry.project_path = project_path;
+                let dup = found
+                    .iter()
+                    .any(|r| r.app == app_name && r.project_path == project_path);
+                if !dup {
+                    found.push(RunningApp {
+                        app: app_name.to_string(),
+                        project: project_name,
+                        project_path,
+                    });
                 }
             }
         }
     }
 
-    best.into_values().collect()
+    found
 }
 
 #[tauri::command]

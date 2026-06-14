@@ -88,7 +88,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       try {
         const running = await invoke<RunningApp[]>("poll_activity");
         if (cancelled) return;
-        running.sort((a, b) => a.app.localeCompare(b.app));
+        running.sort((a, b) =>
+          (a.app + (a.project_path ?? "")).localeCompare(b.app + (b.project_path ?? "")),
+        );
         setRunningApps((prev) => (sameRunning(prev, running) ? prev : running));
         const log = await invoke<ActivityEntry[]>("get_activity_log");
         if (!cancelled) setActivityLog(log);
