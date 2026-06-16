@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
+use std::io::Read;
 use std::sync::OnceLock;
 use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
+use tauri::ipc::Channel;
 use tauri::Manager;
 use walkdir::WalkDir;
 
@@ -698,6 +700,154 @@ fn open_in_explorer(path: String) -> Result<(), String> {
     }
 }
 
+// ── Duplicate scanning ────────────────────────────────────────────────────────
+
+#[derive(Serialize, Clone)]
+struct DuplicateFile {
+    path: String,
+    name: String,
+    size: u64,
+    last_modified: u64,
+}
+
+#[derive(Serialize, Clone)]
+struct DuplicateGroup {
+    size: u64,
+    count: usize,
+    wasted: u64, // reclaimable bytes if all but one copy were removed
+    files: Vec<DuplicateFile>,
+}
+
+#[derive(Serialize, Clone)]
+struct ScanProgress {
+    phase: String, // "indexing" | "hashing" | "done"
+    processed: u64,
+    total: u64,
+    current: String,
+}
+
+// Full-content SHA-256, read in chunks so memory stays bounded on huge files.
+fn hash_file(path: &std::path::Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let mut file = fs::File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 65536];
+    loop {
+        let n = file.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Some(format!("{:x}", hasher.finalize()))
+}
+
+fn scan_duplicates(paths: Vec<String>, progress: Channel<ScanProgress>) -> Result<Vec<DuplicateGroup>, String> {
+    // 1) Index files by size — cheap (metadata only). Files of a unique size can't
+    //    have a content-duplicate, so they're skipped before any hashing.
+    let mut by_size: HashMap<u64, Vec<std::path::PathBuf>> = HashMap::new();
+    let mut scanned: u64 = 0;
+    for path in &paths {
+        let walker = WalkDir::new(path).into_iter().filter_entry(|e| {
+            e.file_name().to_str().map(|n| !should_skip(n)).unwrap_or(true)
+        });
+        for entry in walker.filter_map(|e| e.ok()) {
+            let Ok(meta) = entry.metadata() else { continue };
+            if !meta.is_file() {
+                continue;
+            }
+            let size = meta.len();
+            if size == 0 {
+                continue;
+            }
+            let p = entry.path();
+            if scanned % 1000 == 0 {
+                let _ = progress.send(ScanProgress {
+                    phase: "indexing".into(),
+                    processed: scanned,
+                    total: 0,
+                    current: p.to_string_lossy().into_owned(),
+                });
+            }
+            by_size.entry(size).or_default().push(p.to_path_buf());
+            scanned += 1;
+        }
+    }
+
+    // 2) Hash only files that share a size with at least one other file.
+    let to_hash: u64 = by_size.values().filter(|v| v.len() > 1).map(|v| v.len() as u64).sum();
+    let mut hashed: u64 = 0;
+    let mut groups: Vec<DuplicateGroup> = Vec::new();
+
+    for (size, files) in by_size {
+        if files.len() < 2 {
+            continue;
+        }
+        let mut by_hash: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();
+        for f in files {
+            if hashed % 20 == 0 {
+                let _ = progress.send(ScanProgress {
+                    phase: "hashing".into(),
+                    processed: hashed,
+                    total: to_hash,
+                    current: f.to_string_lossy().into_owned(),
+                });
+            }
+            if let Some(h) = hash_file(&f) {
+                by_hash.entry(h).or_default().push(f);
+            }
+            hashed += 1;
+        }
+        for (_h, dups) in by_hash {
+            if dups.len() >= 2 {
+                let wasted = size.saturating_mul(dups.len() as u64 - 1);
+                let files: Vec<DuplicateFile> = dups
+                    .iter()
+                    .map(|p| {
+                        let last_modified = fs::metadata(p)
+                            .ok()
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        DuplicateFile {
+                            path: p.to_string_lossy().into_owned(),
+                            name: p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                            size,
+                            last_modified,
+                        }
+                    })
+                    .collect();
+                groups.push(DuplicateGroup { size, count: dups.len(), wasted, files });
+            }
+        }
+    }
+
+    groups.sort_by(|a, b| b.wasted.cmp(&a.wasted));
+    groups.truncate(1000);
+
+    let _ = progress.send(ScanProgress {
+        phase: "done".into(),
+        processed: hashed,
+        total: to_hash,
+        current: String::new(),
+    });
+    Ok(groups)
+}
+
+/// Deep duplicate scan: hashes the full contents of every file (after a size
+/// pre-filter) to find exact duplicates. Runs on a background blocking thread so
+/// the UI stays responsive, and streams progress back over a Channel.
+#[tauri::command]
+async fn find_duplicates(
+    paths: Vec<String>,
+    on_progress: Channel<ScanProgress>,
+) -> Result<Vec<DuplicateGroup>, String> {
+    tauri::async_runtime::spawn_blocking(move || scan_duplicates(paths, on_progress))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -722,6 +872,7 @@ pub fn run() {
             get_activity_log,
             clear_activity_log,
             open_in_explorer,
+            find_duplicates,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

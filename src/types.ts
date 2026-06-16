@@ -21,6 +21,27 @@ export interface AppSettings {
   watched_paths: string[];
 }
 
+export interface DuplicateFile {
+  path: string;
+  name: string;
+  size: number;
+  last_modified: number;
+}
+
+export interface DuplicateGroup {
+  size: number;
+  count: number;
+  wasted: number;
+  files: DuplicateFile[];
+}
+
+export interface ScanProgress {
+  phase: string; // "indexing" | "hashing" | "done"
+  processed: number;
+  total: number;
+  current: string;
+}
+
 export interface AppProfile {
   name: string;
   icon: string;
