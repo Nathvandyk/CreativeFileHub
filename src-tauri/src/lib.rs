@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Read;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
@@ -702,6 +703,9 @@ fn open_in_explorer(path: String) -> Result<(), String> {
 
 // ── Duplicate scanning ────────────────────────────────────────────────────────
 
+// Set true to ask an in-progress duplicate scan to stop. Reset at scan start.
+static SCAN_CANCEL: AtomicBool = AtomicBool::new(false);
+
 #[derive(Serialize, Clone)]
 struct DuplicateFile {
     path: String,
@@ -747,11 +751,14 @@ fn scan_duplicates(paths: Vec<String>, progress: Channel<ScanProgress>) -> Resul
     //    have a content-duplicate, so they're skipped before any hashing.
     let mut by_size: HashMap<u64, Vec<std::path::PathBuf>> = HashMap::new();
     let mut scanned: u64 = 0;
-    for path in &paths {
+    'index: for path in &paths {
         let walker = WalkDir::new(path).into_iter().filter_entry(|e| {
             e.file_name().to_str().map(|n| !should_skip(n)).unwrap_or(true)
         });
         for entry in walker.filter_map(|e| e.ok()) {
+            if SCAN_CANCEL.load(Ordering::Relaxed) {
+                break 'index;
+            }
             let Ok(meta) = entry.metadata() else { continue };
             if !meta.is_file() {
                 continue;
@@ -774,17 +781,29 @@ fn scan_duplicates(paths: Vec<String>, progress: Channel<ScanProgress>) -> Resul
         }
     }
 
+    // Stopped during indexing — nothing hashed yet.
+    if SCAN_CANCEL.load(Ordering::Relaxed) {
+        let _ = progress.send(ScanProgress { phase: "done".into(), processed: 0, total: 0, current: String::new() });
+        return Ok(Vec::new());
+    }
+
     // 2) Hash only files that share a size with at least one other file.
     let to_hash: u64 = by_size.values().filter(|v| v.len() > 1).map(|v| v.len() as u64).sum();
     let mut hashed: u64 = 0;
     let mut groups: Vec<DuplicateGroup> = Vec::new();
 
     for (size, files) in by_size {
+        if SCAN_CANCEL.load(Ordering::Relaxed) {
+            break;
+        }
         if files.len() < 2 {
             continue;
         }
         let mut by_hash: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();
         for f in files {
+            if SCAN_CANCEL.load(Ordering::Relaxed) {
+                break;
+            }
             if hashed % 20 == 0 {
                 let _ = progress.send(ScanProgress {
                     phase: "hashing".into(),
@@ -843,9 +862,16 @@ async fn find_duplicates(
     paths: Vec<String>,
     on_progress: Channel<ScanProgress>,
 ) -> Result<Vec<DuplicateGroup>, String> {
+    SCAN_CANCEL.store(false, Ordering::SeqCst);
     tauri::async_runtime::spawn_blocking(move || scan_duplicates(paths, on_progress))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Ask an in-progress duplicate scan to stop. It returns the duplicates found so far.
+#[tauri::command]
+fn cancel_duplicate_scan() {
+    SCAN_CANCEL.store(true, Ordering::SeqCst);
 }
 
 #[tauri::command]
@@ -873,6 +899,7 @@ pub fn run() {
             clear_activity_log,
             open_in_explorer,
             find_duplicates,
+            cancel_duplicate_scan,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

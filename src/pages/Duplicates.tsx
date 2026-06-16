@@ -9,12 +9,14 @@ export default function Duplicates() {
   const { watchedPaths } = useAppContext();
   const { menu, open, close } = useContextMenu();
   const [scanning, setScanning] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [progress, setProgress] = useState<ScanProgress | null>(null);
   const [groups, setGroups]     = useState<DuplicateGroup[] | null>(null);
 
   async function deepScan() {
     if (watchedPaths.length === 0 || scanning) return;
     setScanning(true);
+    setStopping(false);
     setGroups(null);
     setProgress({ phase: "indexing", processed: 0, total: 0, current: "" });
 
@@ -29,8 +31,14 @@ export default function Duplicates() {
       setGroups([]);
     } finally {
       setScanning(false);
+      setStopping(false);
       setProgress(null);
     }
+  }
+
+  async function stopScan() {
+    setStopping(true);
+    try { await invoke("cancel_duplicate_scan"); } catch { /* ignore */ }
   }
 
   const totalWasted = groups?.reduce((s, g) => s + g.wasted, 0) ?? 0;
@@ -46,13 +54,23 @@ export default function Duplicates() {
             Deep scan compares full file contents to find exact duplicates
           </p>
         </div>
-        <button
-          onClick={deepScan}
-          disabled={scanning || watchedPaths.length === 0}
-          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm font-semibold rounded-xl transition-colors"
-        >
-          {scanning ? "Scanning…" : "Deep Scan"}
-        </button>
+        {scanning ? (
+          <button
+            onClick={stopScan}
+            disabled={stopping}
+            className="px-5 py-2.5 bg-red-600 hover:bg-red-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm font-semibold rounded-xl transition-colors"
+          >
+            {stopping ? "Stopping…" : "Stop"}
+          </button>
+        ) : (
+          <button
+            onClick={deepScan}
+            disabled={watchedPaths.length === 0}
+            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm font-semibold rounded-xl transition-colors"
+          >
+            Deep Scan
+          </button>
+        )}
       </div>
 
       {watchedPaths.length === 0 && (
