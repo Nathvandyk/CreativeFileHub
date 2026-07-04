@@ -70,3 +70,23 @@ export interface ActivityEntry {
   sessions: number;
   active_seconds: number;
 }
+
+export interface AiSearchResult {
+  path: string;
+  name: string;
+  size: number;
+  is_dir: boolean;
+  ext: string;
+  last_modified: number;
+  app: string | null;
+  score: number;
+  reason: string;
+}
+
+export interface AiSearchResponse {
+  query: string;
+  terms: string[];
+  ollama_used: boolean;
+  searched_files: number;
+  results: AiSearchResult[];
+}

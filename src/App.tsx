@@ -8,8 +8,10 @@ import Recent from "./pages/Recent";
 import Creative from "./pages/Creative";
 import Activity from "./pages/Activity";
 import Applications from "./pages/Applications";
+import AiSearch from "./pages/AiSearch";
+import UpdateBanner from "./components/UpdateBanner";
 
-type Page = "dashboard" | "scanner" | "duplicates" | "organise" | "recent" | "creative" | "activity" | "applications";
+type Page = "dashboard" | "scanner" | "duplicates" | "organise" | "recent" | "creative" | "activity" | "applications" | "aiSearch";
 
 const navItems: { id: Page; label: string; icon: string }[] = [
   { id: "dashboard",    label: "Dashboard",    icon: "⊞" },
@@ -20,6 +22,7 @@ const navItems: { id: Page; label: string; icon: string }[] = [
   { id: "duplicates",   label: "Duplicates",   icon: "⊕" },
   { id: "organise",     label: "Organise",     icon: "≡" },
   { id: "applications", label: "Applications", icon: "⚙" },
+  { id: "aiSearch",     label: "AI Search",    icon: "AI" },
 ];
 
 function App() {
@@ -31,7 +34,7 @@ function App() {
       {/* Sidebar */}
       <aside className="w-56 bg-zinc-900 border-r border-zinc-800 flex flex-col py-6 px-3 gap-1">
         <div className="px-3 mb-6">
-          <h1 className="text-lg font-semibold tracking-tight text-white">FileManager</h1>
+          <h1 className="text-lg font-semibold tracking-tight text-white">CreativeHub</h1>
           <p className="text-xs text-zinc-500 mt-0.5">Drive organiser</p>
         </div>
 
@@ -52,16 +55,20 @@ function App() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-y-auto p-8">
-        {page === "dashboard"    && <Dashboard    onNavigate={setPage} />}
-        {page === "recent"       && <Recent />}
-        {page === "activity"     && <Activity />}
-        {page === "creative"     && <Creative />}
-        {page === "scanner"      && <Scanner />}
-        {page === "duplicates"   && <Duplicates />}
-        {page === "organise"     && <Organise />}
-        {page === "applications" && <Applications />}
-      </main>
+      <div className="flex-1 flex flex-col min-w-0">
+        <UpdateBanner />
+        <main className="flex-1 overflow-y-auto p-8">
+          {page === "dashboard"    && <Dashboard    onNavigate={setPage} />}
+          {page === "recent"       && <Recent />}
+          {page === "activity"     && <Activity />}
+          {page === "creative"     && <Creative />}
+          {page === "scanner"      && <Scanner />}
+          {page === "duplicates"   && <Duplicates />}
+          {page === "organise"     && <Organise />}
+          {page === "applications" && <Applications />}
+          {page === "aiSearch"     && <AiSearch />}
+        </main>
+      </div>
 
     </div>
   );

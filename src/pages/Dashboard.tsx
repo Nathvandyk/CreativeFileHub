@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppContext, useLive } from "../context/AppContext";
 import { useContextMenu, ContextMenu } from "../components/ContextMenu";
-import type { DriveInfo } from "../types";
-import { formatBytes, formatRelativeTime, formatDuration, activeSecondsByApp, extToApp, EXT_COLOR, openInExplorer } from "../utils";
+import type { ActivityEntry, AppProfile, DriveInfo, FileEntry } from "../types";
+import { formatBytes, formatRelativeTime, formatDuration, activeSecondsByApp, extToApp, EXT_COLOR, openInExplorer, openPath } from "../utils";
 
 type Page = "dashboard" | "scanner" | "duplicates" | "organise" | "recent" | "creative" | "activity" | "applications";
 
@@ -17,14 +17,134 @@ const BAR_COLORS: Record<string, string> = {
   cyan: "bg-cyan-500", zinc: "bg-zinc-400",
 };
 
+type ProjectShortcut = {
+  path: string;
+  name: string;
+  ext: string;
+  last_modified: number;
+};
+
+type ProjectGroup = {
+  app: string;
+  icon: string;
+  projects: ProjectShortcut[];
+  last_seen: number;
+};
+
+function fileName(path: string): string {
+  const idx = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
+  return idx >= 0 ? path.slice(idx + 1) : path;
+}
+
+function extension(path: string): string {
+  const name = fileName(path);
+  const idx = name.lastIndexOf(".");
+  return idx >= 0 ? name.slice(idx + 1).toLowerCase() : "";
+}
+
+function mainProjectExts(profile: AppProfile): string[] {
+  const roots = profile.root_marker_exts.map((e) => e.toLowerCase());
+  if (roots.length > 0) return roots;
+  return profile.extensions.slice(0, 1).map((e) => e.toLowerCase());
+}
+
+function buildProjectGroups(
+  profiles: AppProfile[],
+  trackedApps: string[],
+  activityLog: ActivityEntry[],
+  recentFiles: FileEntry[],
+): ProjectGroup[] {
+  const profileByName = new Map(profiles.map((p) => [p.name, p]));
+  const tracked = new Set(trackedApps);
+
+  const latestByApp = new Map<string, number>();
+  for (const entry of activityLog) {
+    if (!tracked.has(entry.app)) continue;
+    latestByApp.set(entry.app, Math.max(latestByApp.get(entry.app) ?? 0, entry.last_seen));
+  }
+  for (const file of recentFiles) {
+    const app = extToApp(file.ext);
+    if (!app || !tracked.has(app)) continue;
+    latestByApp.set(app, Math.max(latestByApp.get(app) ?? 0, file.last_modified));
+  }
+
+  const groups: ProjectGroup[] = [];
+  for (const [app, lastSeen] of latestByApp) {
+    const profile = profileByName.get(app);
+    if (!profile) continue;
+
+    const mainExts = new Set(mainProjectExts(profile));
+    const projects = new Map<string, ProjectShortcut>();
+    const addProject = (project: ProjectShortcut) => {
+      const key = project.path.toLowerCase();
+      const existing = projects.get(key);
+      if (!existing || project.last_modified > existing.last_modified) {
+        projects.set(key, project);
+      }
+    };
+
+    for (const entry of activityLog) {
+      if (entry.app !== app || !entry.project_path) continue;
+      const ext = extension(entry.project_path);
+      if (mainExts.size > 0 && !mainExts.has(ext)) continue;
+      addProject({
+        path: entry.project_path,
+        name: fileName(entry.project_path),
+        ext,
+        last_modified: entry.last_seen,
+      });
+    }
+
+    for (const file of recentFiles) {
+      if (extToApp(file.ext) !== app) continue;
+      const ext = file.ext.toLowerCase();
+      if (mainExts.size > 0 && !mainExts.has(ext)) continue;
+      addProject({
+        path: file.path,
+        name: file.name,
+        ext,
+        last_modified: file.last_modified,
+      });
+    }
+
+    const sortedProjects = Array.from(projects.values())
+      .sort((a, b) => b.last_modified - a.last_modified)
+      .slice(0, 3);
+
+    if (sortedProjects.length > 0) {
+      groups.push({
+        app,
+        icon: profile.icon,
+        projects: sortedProjects,
+        last_seen: lastSeen,
+      });
+    }
+  }
+
+  return groups
+    .sort((a, b) => b.last_seen - a.last_seen)
+    .slice(0, 4);
+}
+
 export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => void }) {
   const { trackedApps, watchedPaths, refreshTick, appProfiles, recentFiles: allRecent, recentLoading, triggerRefresh } = useAppContext();
   const { runningApps, activityLog } = useLive();
   const { menu, open, close } = useContextMenu();
   const [drives, setDrives] = useState<DriveInfo[]>([]);
+  const [closedProjectApps, setClosedProjectApps] = useState<Set<string>>(new Set());
 
   const recentFiles  = allRecent.slice(0, 5);
   const loadingFiles = recentLoading;
+  const projectGroups = buildProjectGroups(appProfiles, trackedApps, activityLog, allRecent);
+  const projectColumns: ProjectGroup[][] = [[], []];
+  const projectColumnHeights = [0, 0];
+  for (const group of projectGroups) {
+    const collapsed = closedProjectApps.has(group.app);
+    const weight = collapsed ? 1 : group.projects.length + 1;
+    const column = projectColumnHeights[0] <= projectColumnHeights[1] ? 0 : 1;
+    projectColumns[column].push(group);
+    projectColumnHeights[column] += weight;
+  }
 
   const profileByName: Record<string, { icon: string; color: string }> = {};
   appProfiles.forEach((p) => { profileByName[p.name] = { icon: p.icon, color: p.color }; });
@@ -38,6 +158,14 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => voi
   useEffect(() => {
     invoke<DriveInfo[]>("list_drives").then(setDrives).catch(() => {});
   }, [refreshTick]);
+
+  function toggleProjectApp(app: string) {
+    setClosedProjectApps((prev) => {
+      const next = new Set(prev);
+      if (next.has(app)) next.delete(app); else next.add(app);
+      return next;
+    });
+  }
 
   const totalBytes = drives.reduce((s, d) => s + d.total_bytes, 0);
   const usedBytes  = drives.reduce((s, d) => s + (d.total_bytes - d.free_bytes), 0);
@@ -75,6 +203,85 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => voi
           </div>
         ))}
       </div>
+
+      {/* Recent project launchers */}
+      {projectGroups.length > 0 && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden mb-4">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+            <div>
+              <h3 className="text-sm font-semibold text-white">Recent Projects</h3>
+              <p className="text-xs text-zinc-500 mt-0.5">Open main project files from the apps you used most recently</p>
+            </div>
+            <button
+              onClick={triggerRefresh}
+              disabled={loadingFiles}
+              className="text-xs text-blue-400 hover:text-blue-300 disabled:text-zinc-600 transition-colors"
+            >
+              {loadingFiles ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 p-4 items-start">
+            {projectColumns.map((column, columnIndex) => (
+              <div key={columnIndex} className="flex flex-col gap-3">
+                {column.map((group) => {
+                  const collapsed = closedProjectApps.has(group.app);
+                  const running = runningApps.some((r) => r.app === group.app);
+                  return (
+                    <div key={group.app} className="bg-zinc-950/50 border border-zinc-800 rounded-lg overflow-hidden">
+                      <button
+                        onClick={() => toggleProjectApp(group.app)}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-zinc-800/50 transition-colors"
+                      >
+                        <span className="text-xl shrink-0">{group.icon}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-semibold text-white truncate">{group.app} Projects</p>
+                            {running && (
+                              <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 mt-1">
+                            <div className="flex-1 bg-zinc-800 rounded-full h-1">
+                              <div className={`${barFor(group.app)} h-1 rounded-full`} style={{ width: "100%" }} />
+                            </div>
+                            <span className="text-xs text-zinc-500 shrink-0">{group.projects.length} recent</span>
+                          </div>
+                        </div>
+                        <span className={`text-zinc-600 text-xs transition-transform ${collapsed ? "-rotate-90" : ""}`}>v</span>
+                      </button>
+
+                      {!collapsed && (
+                        <div className="border-t border-zinc-800">
+                          {group.projects.map((project) => (
+                            <button
+                              key={project.path}
+                              onClick={() => openPath(project.path)}
+                              onContextMenu={(e) => open(e, [
+                                { label: "Open file location", icon: "folder", onClick: () => openInExplorer(project.path) },
+                              ])}
+                              className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-zinc-800/50 transition-colors border-b border-zinc-800/50 last:border-0"
+                            >
+                              <span className={`text-xs font-mono font-bold px-1.5 py-0.5 rounded shrink-0 ${EXT_COLOR[project.ext] ?? "bg-zinc-800 text-zinc-400"}`}>
+                                .{project.ext || "file"}
+                              </span>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-medium text-white truncate">{project.name}</p>
+                                <p className="text-xs text-zinc-600 font-mono truncate mt-0.5">{project.path}</p>
+                              </div>
+                              <span className="text-xs text-zinc-600 shrink-0">{formatRelativeTime(project.last_modified)}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Currently Open */}
       {runningApps.length > 0 && (

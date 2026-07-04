@@ -1,11 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::time::Duration;
 use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tauri::ipc::Channel;
 use tauri::Manager;
 use walkdir::WalkDir;
@@ -30,6 +32,28 @@ struct FileEntry {
     // (resolved by walking up the tree). None when no project marker is found.
     project_root: Option<String>,
     project_name: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+struct AiSearchResult {
+    path: String,
+    name: String,
+    size: u64,
+    is_dir: bool,
+    ext: String,
+    last_modified: u64,
+    app: Option<String>,
+    score: i32,
+    reason: String,
+}
+
+#[derive(Serialize)]
+struct AiSearchResponse {
+    query: String,
+    terms: Vec<String>,
+    ollama_used: bool,
+    searched_files: u64,
+    results: Vec<AiSearchResult>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -428,6 +452,238 @@ fn get_project_files(path: String, limit: usize) -> Vec<FileEntry> {
     files
 }
 
+fn tokenize(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|s| s.len() >= 2)
+        .map(|s| s.to_string())
+        .collect()
+}
+
+fn clean_terms(text: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for part in text.split(|c: char| c == ',' || c == '\n' || c == ';') {
+        let cleaned = part
+            .trim()
+            .trim_matches(|c: char| c == '-' || c == '*' || c == '"' || c == '\'' || c == '`')
+            .to_lowercase();
+        if cleaned.len() < 2 || cleaned.len() > 60 {
+            continue;
+        }
+        if seen.insert(cleaned.clone()) {
+            out.push(cleaned);
+        }
+        if out.len() >= 12 {
+            break;
+        }
+    }
+    out
+}
+
+fn fuzzy_subsequence(needle: &str, haystack: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let mut chars = needle.chars();
+    let Some(mut wanted) = chars.next() else { return false; };
+    for ch in haystack.chars() {
+        if ch == wanted {
+            match chars.next() {
+                Some(next) => wanted = next,
+                None => return true,
+            }
+        }
+    }
+    false
+}
+
+fn ollama_terms(query: &str) -> Option<Vec<String>> {
+    let prompt = format!(
+        "Extract up to 10 short file-search terms for this request. Return only comma-separated terms, no explanation.\nRequest: {}",
+        query
+    );
+    let body = json!({
+        "model": "llama3.1",
+        "prompt": prompt,
+        "stream": false,
+        "options": { "temperature": 0.1 }
+    })
+    .to_string();
+
+    let mut stream = std::net::TcpStream::connect_timeout(
+        &"127.0.0.1:11434".parse().ok()?,
+        Duration::from_millis(700),
+    ).ok()?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(4)));
+    let request = format!(
+        "POST /api/generate HTTP/1.1\r\nHost: 127.0.0.1:11434\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.as_bytes().len(),
+        body
+    );
+    stream.write_all(request.as_bytes()).ok()?;
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response).ok()?;
+    let body = response.split("\r\n\r\n").nth(1)?;
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let text = value.get("response")?.as_str()?;
+    let terms = clean_terms(text);
+    if terms.is_empty() { None } else { Some(terms) }
+}
+
+fn score_search_candidate(name: &str, path: &str, ext: &str, query: &str, terms: &[String]) -> (i32, String) {
+    let name_l = name.to_lowercase();
+    let path_l = path.to_lowercase();
+    let ext_l = ext.to_lowercase();
+    let query_l = query.to_lowercase();
+    let mut score = 0;
+    let mut reasons: Vec<&str> = Vec::new();
+
+    if !query_l.is_empty() {
+        if name_l.contains(&query_l) {
+            score += 120;
+            reasons.push("filename contains your phrase");
+        } else if path_l.contains(&query_l) {
+            score += 60;
+            reasons.push("path contains your phrase");
+        } else if fuzzy_subsequence(&query_l.replace(' ', ""), &name_l) {
+            score += 24;
+            reasons.push("filename is a fuzzy match");
+        }
+    }
+
+    for term in terms {
+        if name_l.contains(term) {
+            score += 28;
+            reasons.push("matched search term in filename");
+        } else if path_l.contains(term) {
+            score += 10;
+            reasons.push("matched search term in path");
+        } else if ext_l == term.trim_start_matches('.') {
+            score += 16;
+            reasons.push("matched file extension");
+        }
+    }
+
+    let reason = if reasons.is_empty() {
+        "weak related match".to_string()
+    } else {
+        let mut uniq = Vec::new();
+        for r in reasons {
+            if !uniq.contains(&r) {
+                uniq.push(r);
+            }
+            if uniq.len() >= 2 {
+                break;
+            }
+        }
+        uniq.join(", ")
+    };
+
+    (score, reason)
+}
+
+#[tauri::command]
+async fn ai_search_files(paths: Vec<String>, query: String, limit: usize) -> Result<AiSearchResponse, String> {
+    let query = query.trim().to_string();
+    if query.is_empty() {
+        return Ok(AiSearchResponse {
+            query,
+            terms: Vec::new(),
+            ollama_used: false,
+            searched_files: 0,
+            results: Vec::new(),
+        });
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut terms = tokenize(&query);
+        let mut ollama_used = false;
+        if let Some(extra) = ollama_terms(&query) {
+            ollama_used = true;
+            for term in extra {
+                if !terms.iter().any(|t| t == &term) {
+                    terms.push(term);
+                }
+            }
+        }
+        terms.sort();
+        terms.dedup();
+
+        let mut results: Vec<AiSearchResult> = Vec::new();
+        let mut searched_files: u64 = 0;
+
+        for path in &paths {
+            let walker = WalkDir::new(path)
+                .max_depth(12)
+                .into_iter()
+                .filter_entry(|e| {
+                    e.file_name()
+                        .to_str()
+                        .map(|n| !should_skip(n))
+                        .unwrap_or(true)
+                });
+
+            for entry in walker.filter_map(|e| e.ok()) {
+                let Ok(meta) = entry.metadata() else { continue };
+                if !meta.is_file() {
+                    continue;
+                }
+                searched_files += 1;
+                if searched_files > 100_000 {
+                    break;
+                }
+
+                let p = entry.path();
+                let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let path_str = p.to_string_lossy().into_owned();
+                let ext = p.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
+                let (score, reason) = score_search_candidate(&name, &path_str, &ext, &query, &terms);
+                if score <= 0 {
+                    continue;
+                }
+
+                let last_modified = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+
+                results.push(AiSearchResult {
+                    path: path_str,
+                    name,
+                    size: meta.len(),
+                    is_dir: false,
+                    ext: ext.clone(),
+                    last_modified,
+                    app: ext_to_app(&ext).map(|s| s.to_string()),
+                    score,
+                    reason,
+                });
+            }
+        }
+
+        results.sort_by(|a, b| {
+            b.score
+                .cmp(&a.score)
+                .then_with(|| b.last_modified.cmp(&a.last_modified))
+        });
+        results.truncate(limit.min(100));
+
+        Ok(AiSearchResponse {
+            query,
+            terms,
+            ollama_used,
+            searched_files,
+            results,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn detect_apps(paths: Vec<String>) -> Vec<String> {
     let mut detected: HashSet<&str> = HashSet::new();
@@ -672,11 +928,26 @@ fn clear_activity_log(app: tauri::AppHandle) {
     write_activity_log(&app, &[]);
 }
 
+/// Reject strings that could break out of a quoted argument or aren't real
+/// filesystem paths. Both open commands shell out with the caller-supplied
+/// string, so validate it is an existing local path with no quote/control
+/// characters (blocks arg injection via raw_arg and URLs like https://…).
+fn validate_local_path(path: &str) -> Result<&std::path::Path, String> {
+    if path.contains('"') || path.chars().any(|c| c.is_control()) {
+        return Err("Path contains invalid characters.".into());
+    }
+    let p = std::path::Path::new(path);
+    if !p.exists() {
+        return Err("Path does not exist.".into());
+    }
+    Ok(p)
+}
+
 /// Open a path in the system file manager. On Windows: a file is revealed with it
 /// selected; a folder (or a file's parent) is opened directly.
 #[tauri::command]
 fn open_in_explorer(path: String) -> Result<(), String> {
-    let p = std::path::Path::new(&path);
+    let p = validate_local_path(&path)?;
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -698,6 +969,37 @@ fn open_in_explorer(path: String) -> Result<(), String> {
     {
         let _ = p;
         Err("Opening the file manager is only supported on Windows.".into())
+    }
+}
+
+/// Open a file/folder with the default OS association. This is used for project
+/// files like .blend and .uproject where the intent is to launch the app.
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    validate_local_path(&path)?;
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 }
 
@@ -743,6 +1045,27 @@ fn hash_file(path: &std::path::Path) -> Option<String> {
         }
         hasher.update(&buf[..n]);
     }
+    Some(format!("{:x}", hasher.finalize()))
+}
+
+const PREFIX_HASH_BYTES: usize = 65536;
+
+// SHA-256 of just the first 64 KiB — a cheap prefilter so same-size files that
+// differ early are never read in full. For files ≤ 64 KiB this IS the full hash.
+fn hash_file_prefix(path: &std::path::Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let mut file = fs::File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; PREFIX_HASH_BYTES];
+    let mut read = 0;
+    while read < buf.len() {
+        let n = file.read(&mut buf[read..]).ok()?;
+        if n == 0 {
+            break;
+        }
+        read += n;
+    }
+    hasher.update(&buf[..read]);
     Some(format!("{:x}", hasher.finalize()))
 }
 
@@ -799,7 +1122,9 @@ fn scan_duplicates(paths: Vec<String>, progress: Channel<ScanProgress>) -> Resul
         if files.len() < 2 {
             continue;
         }
-        let mut by_hash: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();
+        // 2a) Cheap prefix hash (first 64 KiB). Same-size files that differ in their
+        //     opening bytes are ruled out here without ever reading them fully.
+        let mut by_prefix: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();
         for f in files {
             if SCAN_CANCEL.load(Ordering::Relaxed) {
                 break;
@@ -812,10 +1137,34 @@ fn scan_duplicates(paths: Vec<String>, progress: Channel<ScanProgress>) -> Resul
                     current: f.to_string_lossy().into_owned(),
                 });
             }
-            if let Some(h) = hash_file(&f) {
-                by_hash.entry(h).or_default().push(f);
+            if let Some(h) = hash_file_prefix(&f) {
+                by_prefix.entry(h).or_default().push(f);
             }
             hashed += 1;
+        }
+
+        // 2b) Full-content hash, but only for groups that still collide after the
+        //     prefix pass. Small files are already fully hashed by the prefix.
+        let mut by_hash: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();
+        for (prefix_hash, group) in by_prefix {
+            if SCAN_CANCEL.load(Ordering::Relaxed) {
+                break;
+            }
+            if group.len() < 2 {
+                continue;
+            }
+            if size <= PREFIX_HASH_BYTES as u64 {
+                by_hash.insert(prefix_hash, group);
+                continue;
+            }
+            for f in group {
+                if SCAN_CANCEL.load(Ordering::Relaxed) {
+                    break;
+                }
+                if let Some(h) = hash_file(&f) {
+                    by_hash.entry(h).or_default().push(f);
+                }
+            }
         }
         for (_h, dups) in by_hash {
             if dups.len() >= 2 {
@@ -874,21 +1223,18 @@ fn cancel_duplicate_scan() {
     SCAN_CANCEL.store(true, Ordering::SeqCst);
 }
 
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
-            greet,
             list_drives,
             scan_directory,
             get_recent_files,
             get_project_files,
+            ai_search_files,
             detect_apps,
             get_app_profiles,
             load_settings,
@@ -898,6 +1244,7 @@ pub fn run() {
             get_activity_log,
             clear_activity_log,
             open_in_explorer,
+            open_path,
             find_duplicates,
             cancel_duplicate_scan,
         ])

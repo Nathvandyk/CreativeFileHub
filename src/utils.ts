@@ -5,6 +5,11 @@ export function openInExplorer(path: string) {
   invoke("open_in_explorer", { path }).catch(() => {});
 }
 
+// Open a file or folder with its default Windows application.
+export function openPath(path: string) {
+  invoke("open_path", { path }).catch(() => {});
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
   const sizes = ["B", "KB", "MB", "GB", "TB"];

@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local build helpers — releases are uploaded to GitHub separately
+*.bat
+*.exe
+*.exe.sig
+latest.json
