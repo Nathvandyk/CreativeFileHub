@@ -65,17 +65,17 @@ export default function Recent() {
         </div>
       </div>
 
-      {loading && (
+      {loading && files.length === 0 && (
         <div className="text-center py-16 text-zinc-500 text-sm">Loading files...</div>
       )}
 
-      {!loading && watchedPaths.length === 0 && (
+      {watchedPaths.length === 0 && files.length === 0 && (
         <div className="text-center py-16 text-zinc-600 text-sm">
           Add watched paths in Applications to see recent files
         </div>
       )}
 
-      {!loading && watchedPaths.length > 0 && (
+      {files.length > 0 && (
         <div className="flex flex-col gap-2">
           {visible.map((f, i) => (
             <div
@@ -109,6 +109,10 @@ export default function Recent() {
             <div className="text-center py-16 text-zinc-600 text-sm">No files match your search</div>
           )}
         </div>
+      )}
+
+      {!loading && watchedPaths.length > 0 && files.length === 0 && (
+        <div className="text-center py-16 text-zinc-600 text-sm">No recent files found</div>
       )}
 
       <ContextMenu menu={menu} onClose={close} />

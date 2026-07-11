@@ -250,7 +250,13 @@ fn find_project_root(
 }
 
 #[tauri::command]
-fn list_drives() -> Vec<DriveInfo> {
+async fn list_drives() -> Vec<DriveInfo> {
+    tauri::async_runtime::spawn_blocking(list_drives_inner)
+        .await
+        .unwrap_or_default()
+}
+
+fn list_drives_inner() -> Vec<DriveInfo> {
     use sysinfo::Disks;
     let disks = Disks::new_with_refreshed_list();
     disks
@@ -266,7 +272,13 @@ fn list_drives() -> Vec<DriveInfo> {
 }
 
 #[tauri::command]
-fn scan_directory(path: String, max_depth: u32) -> Vec<FileEntry> {
+async fn scan_directory(path: String, max_depth: u32) -> Vec<FileEntry> {
+    tauri::async_runtime::spawn_blocking(move || scan_directory_inner(path, max_depth))
+        .await
+        .unwrap_or_default()
+}
+
+fn scan_directory_inner(path: String, max_depth: u32) -> Vec<FileEntry> {
     let mut entries = Vec::new();
     let walker = WalkDir::new(&path)
         .max_depth(max_depth as usize)
@@ -305,7 +317,13 @@ fn scan_directory(path: String, max_depth: u32) -> Vec<FileEntry> {
 }
 
 #[tauri::command]
-fn get_recent_files(paths: Vec<String>, limit: usize) -> Vec<FileEntry> {
+async fn get_recent_files(paths: Vec<String>, limit: usize) -> Vec<FileEntry> {
+    tauri::async_runtime::spawn_blocking(move || get_recent_files_inner(paths, limit))
+        .await
+        .unwrap_or_default()
+}
+
+fn get_recent_files_inner(paths: Vec<String>, limit: usize) -> Vec<FileEntry> {
     let cap = limit.min(500);
     let now = std::time::SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -387,7 +405,13 @@ fn get_recent_files(paths: Vec<String>, limit: usize) -> Vec<FileEntry> {
 /// its recently-modified files. Used to surface what you're working on inside an
 /// app that's currently open, regardless of file extension matching.
 #[tauri::command]
-fn get_project_files(path: String, limit: usize) -> Vec<FileEntry> {
+async fn get_project_files(path: String, limit: usize) -> Vec<FileEntry> {
+    tauri::async_runtime::spawn_blocking(move || get_project_files_inner(path, limit))
+        .await
+        .unwrap_or_default()
+}
+
+fn get_project_files_inner(path: String, limit: usize) -> Vec<FileEntry> {
     let p = std::path::Path::new(&path);
     let root = if p.is_file() {
         p.parent().map(|x| x.to_path_buf()).unwrap_or_else(|| p.to_path_buf())
@@ -685,7 +709,13 @@ async fn ai_search_files(paths: Vec<String>, query: String, limit: usize) -> Res
 }
 
 #[tauri::command]
-fn detect_apps(paths: Vec<String>) -> Vec<String> {
+async fn detect_apps(paths: Vec<String>) -> Vec<String> {
+    tauri::async_runtime::spawn_blocking(move || detect_apps_inner(paths))
+        .await
+        .unwrap_or_default()
+}
+
+fn detect_apps_inner(paths: Vec<String>) -> Vec<String> {
     let mut detected: HashSet<&str> = HashSet::new();
 
     for path in &paths {
@@ -874,7 +904,13 @@ fn write_activity_log(app: &tauri::AppHandle, log: &[ActivityEntry]) {
 /// currently-running apps. Called on a timer so the log accumulates a history of
 /// every app + project you've worked in and when you last had it open.
 #[tauri::command]
-fn poll_activity(app: tauri::AppHandle) -> Vec<RunningApp> {
+async fn poll_activity(app: tauri::AppHandle) -> Vec<RunningApp> {
+    tauri::async_runtime::spawn_blocking(move || poll_activity_inner(app))
+        .await
+        .unwrap_or_default()
+}
+
+fn poll_activity_inner(app: tauri::AppHandle) -> Vec<RunningApp> {
     let running = detect_running_apps();
     let now = now_secs();
     let mut log = read_activity_log(&app);

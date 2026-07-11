@@ -1,6 +1,17 @@
-import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, RunningApp, ActivityEntry, AppProfile, FileEntry } from "../types";
+
+const RECENT_CACHE_KEY = "cache.recentFiles";
+
+function loadCachedRecent(): FileEntry[] {
+  try {
+    const raw = localStorage.getItem(RECENT_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as FileEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
 
 // Data that changes rarely (settings, profiles, scanned recent files). Consumers
 // of this context do NOT re-render on the 5s live poll.
@@ -57,8 +68,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [watchedPaths, setWatchedPathsState] = useState<string[]>([]);
   const [refreshTick, setRefreshTick] = useState(0);
   const [appProfiles, setAppProfiles] = useState<AppProfile[]>([]);
-  const [recentFiles, setRecentFiles] = useState<FileEntry[]>([]);
+  // Seed from the last session's cache so the UI has data instantly on open.
+  const [recentFiles, setRecentFiles] = useState<FileEntry[]>(loadCachedRecent);
   const [recentLoading, setRecentLoading] = useState(false);
+  const firstScanRef = useRef(true);
   const [runningApps, setRunningApps] = useState<RunningApp[]>([]);
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
 
@@ -70,15 +83,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     invoke<AppProfile[]>("get_app_profiles").then(setAppProfiles).catch(() => {});
   }, []);
 
-  // Recent files are scanned once here and shared by every page (so switching
-  // tabs doesn't trigger a fresh whole-drive scan each time).
+  // Recent files are scanned once here and shared by every page. On the first
+  // load we show cached data immediately and defer the scan a couple seconds so
+  // the window is interactive right away; later refreshes run immediately.
   useEffect(() => {
-    if (watchedPaths.length === 0) { setRecentFiles([]); return; }
-    setRecentLoading(true);
-    invoke<FileEntry[]>("get_recent_files", { paths: watchedPaths, limit: 200 })
-      .then(setRecentFiles)
-      .catch(() => {})
-      .finally(() => setRecentLoading(false));
+    if (watchedPaths.length === 0) return; // keep cached data on screen
+    const delay = firstScanRef.current ? 2000 : 0;
+    firstScanRef.current = false;
+    const t = setTimeout(() => {
+      setRecentLoading(true);
+      invoke<FileEntry[]>("get_recent_files", { paths: watchedPaths, limit: 200 })
+        .then((files) => {
+          setRecentFiles(files);
+          try { localStorage.setItem(RECENT_CACHE_KEY, JSON.stringify(files)); } catch { /* quota */ }
+        })
+        .catch(() => {})
+        .finally(() => setRecentLoading(false));
+    }, delay);
+    return () => clearTimeout(t);
   }, [watchedPaths, refreshTick]);
 
   // Single 5s poller for running apps + activity log.

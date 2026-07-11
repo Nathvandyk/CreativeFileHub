@@ -375,10 +375,10 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => voi
             </button>
           </div>
           <div className="flex flex-col">
-            {loadingFiles && (
+            {loadingFiles && recentFiles.length === 0 && (
               <div className="px-5 py-8 text-center text-xs text-zinc-500">Loading files...</div>
             )}
-            {!loadingFiles && watchedPaths.length === 0 && (
+            {watchedPaths.length === 0 && recentFiles.length === 0 && (
               <div className="px-5 py-8 text-center text-xs text-zinc-600">
                 Add watched paths in{" "}
                 <button onClick={() => onNavigate("applications")} className="text-blue-400 hover:underline">
@@ -387,7 +387,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => voi
                 to see recent files
               </div>
             )}
-            {!loadingFiles && recentFiles.map((f, i) => (
+            {recentFiles.map((f, i) => (
               <div
                 key={i}
                 onClick={() => onNavigate("recent")}
@@ -408,6 +408,9 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => voi
             ))}
             {!loadingFiles && watchedPaths.length > 0 && recentFiles.length === 0 && (
               <div className="px-5 py-8 text-center text-xs text-zinc-600">No recent files found</div>
+            )}
+            {loadingFiles && recentFiles.length > 0 && (
+              <div className="px-5 py-2 text-center text-xs text-zinc-600">Refreshing…</div>
             )}
           </div>
         </div>
