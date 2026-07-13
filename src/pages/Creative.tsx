@@ -107,6 +107,19 @@ export default function Creative() {
   const activeByApp = activeSecondsByApp(activityLog);
   const maxActive   = Math.max(1, ...visibleApps.map((a) => activeByApp[a.name] ?? 0));
 
+  // Worked-time per exact file/project path (activity log is keyed by path), so a
+  // specific .blend / .uproject shows its own logged hours.
+  const secondsByPath: Record<string, number> = {};
+  for (const e of activityLog) {
+    if (e.project_path) secondsByPath[e.project_path] = (secondsByPath[e.project_path] ?? 0) + e.active_seconds;
+  }
+  // Total worked-time for a project folder (sums every tracked file under it).
+  const hoursForGroup = (groupKey: string) =>
+    activityLog.reduce(
+      (s, e) => (e.project_path && parentDir(e.project_path) === groupKey ? s + e.active_seconds : s),
+      0,
+    );
+
   function filesForApp(p: AppProfile): FileEntry[] {
     const exts = p.extensions.map((e) => e.toLowerCase());
     return recentFiles.filter((f) => exts.includes(f.ext.toLowerCase())).slice(0, 20);
@@ -234,6 +247,7 @@ export default function Creative() {
                     groups.map((group) => {
                       const gkey      = `${app.name}::${group.key}`;
                       const collapsed = collapsedGroups.has(gkey);
+                      const groupSecs = hoursForGroup(group.key);
                       return (
                         <div key={group.key}>
                           {/* Project header — a collapsible dropdown */}
@@ -250,6 +264,9 @@ export default function Creative() {
                             <span className="text-xs text-zinc-600 shrink-0">
                               · {group.files.length} file{group.files.length !== 1 ? "s" : ""}
                             </span>
+                            {groupSecs > 0 && (
+                              <span className="text-xs text-emerald-400/80 shrink-0">· {formatDuration(groupSecs)}</span>
+                            )}
                             {openRoots.has(group.key) && (
                               <span className="flex items-center gap-1 text-xs text-green-400 shrink-0 ml-auto">
                                 <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
@@ -261,6 +278,7 @@ export default function Creative() {
                           {/* Files nested under the project */}
                           {!collapsed && group.files.map((f, i) => {
                             const sub = subPath(f);
+                            const fileSecs = secondsByPath[f.path] ?? 0;
                             return (
                               <div
                                 key={i}
@@ -274,7 +292,12 @@ export default function Creative() {
                                     .{f.ext}
                                   </span>
                                   <div className="min-w-0">
-                                    <p className="text-sm text-white font-medium truncate">{f.name}</p>
+                                    <div className="flex items-center gap-2">
+                                      <p className="text-sm text-white font-medium truncate">{f.name}</p>
+                                      {fileSecs > 0 && (
+                                        <span className="text-xs text-emerald-400/90 shrink-0">{formatDuration(fileSecs)}</span>
+                                      )}
+                                    </div>
                                     {sub && (
                                       <p className="text-xs text-zinc-600 font-mono truncate mt-0.5">{sub}</p>
                                     )}
