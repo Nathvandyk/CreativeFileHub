@@ -1,22 +1,24 @@
 import { useState } from "react";
 import { useAppContext } from "../context/AppContext";
 import { useContextMenu, ContextMenu } from "../components/ContextMenu";
-import { formatBytes, formatRelativeTime, extToApp, extToType, EXT_COLOR, openInExplorer } from "../utils";
+import { formatBytes, formatRelativeTime, buildExtToApp, buildExtToType, EXT_COLOR, openInExplorer } from "../utils";
 
 type Filter = "all" | "code" | "creative";
 
 export default function Recent() {
-  const { trackedApps, watchedPaths, recentFiles, recentLoading, triggerRefresh } = useAppContext();
+  const { trackedApps, watchedPaths, appProfiles, recentFiles, recentLoading, triggerRefresh } = useAppContext();
   const { menu, open, close } = useContextMenu();
   const [filter, setFilter]     = useState<Filter>("all");
   const [search, setSearch]     = useState("");
 
   const files   = recentFiles;
   const loading = recentLoading;
+  const extAppMap  = buildExtToApp(appProfiles);
+  const extTypeMap = buildExtToType(appProfiles);
 
   const visible = files.filter((f) => {
-    const app      = extToApp(f.ext);
-    const type     = extToType(f.ext);
+    const app      = extAppMap[f.ext.toLowerCase()] ?? "";
+    const type     = extTypeMap[f.ext.toLowerCase()] ?? "other";
     const inTracked = !app || trackedApps.includes(app);
     const inType   = filter === "all" || type === filter;
     const inSearch = !search ||
@@ -95,7 +97,7 @@ export default function Recent() {
               </div>
 
               <span className="text-xs text-zinc-500 shrink-0 hidden group-hover:block">
-                {extToApp(f.ext) || "—"}
+                {extAppMap[f.ext.toLowerCase()] || "—"}
               </span>
 
               <div className="text-right shrink-0">

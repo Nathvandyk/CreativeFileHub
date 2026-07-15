@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppContext, useLive } from "../context/AppContext";
 import { useContextMenu, ContextMenu } from "../components/ContextMenu";
 import type { ActivityEntry, AppProfile, DriveInfo, FileEntry } from "../types";
-import { formatBytes, formatRelativeTime, formatDuration, activeSecondsByApp, extToApp, EXT_COLOR, openInExplorer, openPath } from "../utils";
+import { formatBytes, formatRelativeTime, formatDuration, activeSecondsByApp, buildExtToApp, EXT_COLOR, openInExplorer, openPath } from "../utils";
 
 type Page = "dashboard" | "scanner" | "duplicates" | "organise" | "recent" | "creative" | "activity" | "applications";
 
@@ -56,6 +56,8 @@ function buildProjectGroups(
 ): ProjectGroup[] {
   const profileByName = new Map(profiles.map((p) => [p.name, p]));
   const tracked = new Set(trackedApps);
+  const extAppMap = buildExtToApp(profiles);
+  const resolveApp = (ext: string) => extAppMap[ext.toLowerCase()] ?? "";
 
   const latestByApp = new Map<string, number>();
   for (const entry of activityLog) {
@@ -63,7 +65,7 @@ function buildProjectGroups(
     latestByApp.set(entry.app, Math.max(latestByApp.get(entry.app) ?? 0, entry.last_seen));
   }
   for (const file of recentFiles) {
-    const app = extToApp(file.ext);
+    const app = resolveApp(file.ext);
     if (!app || !tracked.has(app)) continue;
     latestByApp.set(app, Math.max(latestByApp.get(app) ?? 0, file.last_modified));
   }
@@ -96,7 +98,7 @@ function buildProjectGroups(
     }
 
     for (const file of recentFiles) {
-      if (extToApp(file.ext) !== app) continue;
+      if (resolveApp(file.ext) !== app) continue;
       const ext = file.ext.toLowerCase();
       if (mainExts.size > 0 && !mainExts.has(ext)) continue;
       addProject({
@@ -121,7 +123,7 @@ function buildProjectGroups(
         });
       }
       for (const file of recentFiles) {
-        if (extToApp(file.ext) !== app) continue;
+        if (resolveApp(file.ext) !== app) continue;
         addProject({
           path: file.path,
           name: file.name,
@@ -174,6 +176,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => voi
   appProfiles.forEach((p) => { profileByName[p.name] = { icon: p.icon, color: p.color }; });
   const iconFor = (name: string) => profileByName[name]?.icon ?? "📦";
   const barFor  = (name: string) => BAR_COLORS[profileByName[name]?.color ?? ""] ?? "bg-zinc-500";
+  const extAppMap = buildExtToApp(appProfiles);
 
   // How much each tracked app has been worked on (total active seconds).
   const activeByApp = activeSecondsByApp(activityLog);
@@ -425,7 +428,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => voi
                 </span>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium text-white truncate">{f.name}</p>
-                  <p className="text-xs text-zinc-600 truncate">{extToApp(f.ext) || "File"}</p>
+                  <p className="text-xs text-zinc-600 truncate">{extAppMap[f.ext.toLowerCase()] || "File"}</p>
                 </div>
                 <span className="text-xs text-zinc-600 shrink-0">{formatRelativeTime(f.last_modified)}</span>
               </div>

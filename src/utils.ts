@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { AppProfile } from "./types";
 
 // Reveal a file (selected) or open a folder in the system file manager.
 export function openInExplorer(path: string) {
@@ -65,6 +66,34 @@ export const EXT_TO_APP: Record<string, string> = {
 
 export function extToApp(ext: string): string {
   return EXT_TO_APP[ext.toLowerCase()] ?? "";
+}
+
+const CODE_CATEGORIES = new Set(["Code Editor", "IDE", "Language"]);
+
+// Derive ext -> app-name from the app profiles (the single source of truth), so
+// every tracked app is attributed — not just the core few in EXT_TO_APP.
+export function buildExtToApp(profiles: AppProfile[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const p of profiles) {
+    for (const e of p.extensions) {
+      const k = e.toLowerCase();
+      if (!(k in map)) map[k] = p.name;
+    }
+  }
+  return map;
+}
+
+// Derive ext -> "code" | "creative" from each app's profile category.
+export function buildExtToType(profiles: AppProfile[]): Record<string, "code" | "creative"> {
+  const map: Record<string, "code" | "creative"> = {};
+  for (const p of profiles) {
+    const type = CODE_CATEGORIES.has(p.category) ? "code" : "creative";
+    for (const e of p.extensions) {
+      const k = e.toLowerCase();
+      if (!(k in map)) map[k] = type;
+    }
+  }
+  return map;
 }
 
 export function extToType(ext: string): "code" | "creative" | "other" {
