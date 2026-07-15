@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { getAllWebviewWindows } from "@tauri-apps/api/webviewWindow";
 import "./App.css";
 import Dashboard from "./pages/Dashboard";
 import Scanner from "./pages/Scanner";
@@ -24,6 +25,22 @@ const navItems: { id: Page; label: string; icon: string }[] = [
   { id: "applications", label: "Applications", icon: "⚙" },
   { id: "aiSearch",     label: "AI Search",    icon: "AI" },
 ];
+
+async function toggleOverlay() {
+  try {
+    const wins = await getAllWebviewWindows();
+    const overlay = wins.find((w) => w.label === "overlay");
+    if (!overlay) return;
+    if (await overlay.isVisible()) {
+      await overlay.hide();
+    } else {
+      await overlay.show();
+      await overlay.setFocus();
+    }
+  } catch (e) {
+    console.error("Overlay toggle failed:", e);
+  }
+}
 
 function App() {
   const [page, setPage] = useState<Page>("dashboard");
@@ -52,6 +69,14 @@ function App() {
             {item.label}
           </button>
         ))}
+
+        <button
+          onClick={toggleOverlay}
+          className="mt-auto flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors"
+        >
+          <span className="text-base">🪟</span>
+          Desktop Overlay
+        </button>
       </aside>
 
       {/* Main content */}
