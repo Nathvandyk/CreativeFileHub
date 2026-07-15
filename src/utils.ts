@@ -11,6 +11,33 @@ export function openPath(path: string) {
   invoke("open_path", { path }).catch(() => {});
 }
 
+// Copy text to the clipboard (navigator API, with an execCommand fallback).
+export async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export function parentDir(path: string): string {
+  const i = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
+  return i > 0 ? path.slice(0, i) : path;
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
   const sizes = ["B", "KB", "MB", "GB", "TB"];
