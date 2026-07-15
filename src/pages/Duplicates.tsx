@@ -46,7 +46,7 @@ export default function Duplicates() {
   const pct = progress && progress.total > 0 ? Math.round((progress.processed / progress.total) * 100) : 0;
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="w-full">
       <div className="flex items-start justify-between mb-8">
         <div>
           <h2 className="text-2xl font-semibold text-white">Duplicates</h2>

@@ -42,7 +42,7 @@ export default function AiSearch() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="w-full">
       <div className="mb-8">
         <h2 className="text-2xl font-semibold text-white">AI Search</h2>
         <p className="text-zinc-400 mt-1 text-sm">

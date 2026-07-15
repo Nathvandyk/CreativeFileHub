@@ -65,7 +65,7 @@ export default function Applications() {
   const displayApps = [...knownApps, ...extraApps];
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="w-full">
       <div className="mb-8">
         <h2 className="text-2xl font-semibold text-white">Applications</h2>
         <p className="text-zinc-400 mt-1 text-sm">Choose which apps and paths to track across all pages</p>

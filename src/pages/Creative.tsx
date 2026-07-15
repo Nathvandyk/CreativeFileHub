@@ -134,7 +134,7 @@ export default function Creative() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="w-full">
       <div className="flex items-start justify-between mb-8">
         <div>
           <h2 className="text-2xl font-semibold text-white">Creative Hub</h2>

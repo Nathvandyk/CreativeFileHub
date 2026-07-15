@@ -178,7 +178,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (p: Page) => voi
   ];
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="w-full">
       <div className="flex items-start justify-between mb-8">
         <div>
           <h2 className="text-2xl font-semibold text-white">Dashboard</h2>

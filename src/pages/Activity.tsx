@@ -27,7 +27,7 @@ export default function Activity() {
     runningApps.some((r) => r.app === app && r.project_path === projectPath);
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="w-full">
       <div className="flex items-start justify-between mb-8">
         <div>
           <h2 className="text-2xl font-semibold text-white">Activity Log</h2>
