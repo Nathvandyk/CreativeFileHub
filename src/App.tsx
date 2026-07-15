@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { getAllWebviewWindows } from "@tauri-apps/api/webviewWindow";
 import "./App.css";
 import Dashboard from "./pages/Dashboard";
 import Scanner from "./pages/Scanner";
@@ -10,9 +9,10 @@ import Creative from "./pages/Creative";
 import Activity from "./pages/Activity";
 import Applications from "./pages/Applications";
 import AiSearch from "./pages/AiSearch";
+import Settings from "./pages/Settings";
 import UpdateBanner from "./components/UpdateBanner";
 
-type Page = "dashboard" | "scanner" | "duplicates" | "organise" | "recent" | "creative" | "activity" | "applications" | "aiSearch";
+type Page = "dashboard" | "scanner" | "duplicates" | "organise" | "recent" | "creative" | "activity" | "applications" | "aiSearch" | "settings";
 
 const navItems: { id: Page; label: string; icon: string }[] = [
   { id: "dashboard",    label: "Dashboard",    icon: "⊞" },
@@ -24,23 +24,8 @@ const navItems: { id: Page; label: string; icon: string }[] = [
   { id: "organise",     label: "Organise",     icon: "≡" },
   { id: "applications", label: "Applications", icon: "⚙" },
   { id: "aiSearch",     label: "AI Search",    icon: "AI" },
+  { id: "settings",     label: "Settings",     icon: "🛠" },
 ];
-
-async function toggleOverlay() {
-  try {
-    const wins = await getAllWebviewWindows();
-    const overlay = wins.find((w) => w.label === "overlay");
-    if (!overlay) return;
-    if (await overlay.isVisible()) {
-      await overlay.hide();
-    } else {
-      await overlay.show();
-      await overlay.setFocus();
-    }
-  } catch (e) {
-    console.error("Overlay toggle failed:", e);
-  }
-}
 
 function App() {
   const [page, setPage] = useState<Page>("dashboard");
@@ -69,14 +54,6 @@ function App() {
             {item.label}
           </button>
         ))}
-
-        <button
-          onClick={toggleOverlay}
-          className="mt-auto flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 transition-colors"
-        >
-          <span className="text-base">🪟</span>
-          Desktop Overlay
-        </button>
       </aside>
 
       {/* Main content */}
@@ -92,6 +69,7 @@ function App() {
           {page === "organise"     && <Organise />}
           {page === "applications" && <Applications />}
           {page === "aiSearch"     && <AiSearch />}
+          {page === "settings"     && <Settings />}
         </main>
       </div>
 
