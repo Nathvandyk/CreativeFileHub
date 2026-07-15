@@ -107,6 +107,30 @@ function buildProjectGroups(
       });
     }
 
+    // Fallback: apps that have no "main project" file (e.g. VS Code without a
+    // .sln) still appear, using their recent files, so the top recently-used
+    // apps all show up.
+    if (projects.size === 0) {
+      for (const entry of activityLog) {
+        if (entry.app !== app || !entry.project_path) continue;
+        addProject({
+          path: entry.project_path,
+          name: fileName(entry.project_path),
+          ext: extension(entry.project_path),
+          last_modified: entry.last_seen,
+        });
+      }
+      for (const file of recentFiles) {
+        if (extToApp(file.ext) !== app) continue;
+        addProject({
+          path: file.path,
+          name: file.name,
+          ext: file.ext.toLowerCase(),
+          last_modified: file.last_modified,
+        });
+      }
+    }
+
     const sortedProjects = Array.from(projects.values())
       .sort((a, b) => b.last_modified - a.last_modified)
       .slice(0, 3);

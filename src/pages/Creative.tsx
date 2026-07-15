@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppContext, useLive } from "../context/AppContext";
 import { useContextMenu, ContextMenu } from "../components/ContextMenu";
-import type { FileEntry, AppProfile } from "../types";
+import type { FileEntry, AppProfile, ActivityEntry } from "../types";
 import { formatBytes, formatRelativeTime, formatDuration, activeSecondsByApp, EXT_COLOR, openInExplorer } from "../utils";
 
 const colorMap: Record<string, { bar: string; badge: string; ring: string }> = {
@@ -35,6 +35,39 @@ function parentDir(path: string): string {
 function folderLabel(parent: string): string {
   const idx = Math.max(parent.lastIndexOf("\\"), parent.lastIndexOf("/"));
   return idx >= 0 ? parent.slice(idx + 1) : parent;
+}
+
+function baseName(path: string): string {
+  const idx = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
+  return idx >= 0 ? path.slice(idx + 1) : path;
+}
+
+function extOf(path: string): string {
+  const n = baseName(path);
+  const i = n.lastIndexOf(".");
+  return i >= 0 ? n.slice(i + 1).toLowerCase() : "";
+}
+
+// Turn an activity-log project (a main project file we detected as open) into a
+// FileEntry so it shows in the Creative Hub even if its folder isn't a watched
+// path — keeping Creative in sync with the Dashboard's Recent Projects.
+function activityFilesForApp(activityLog: ActivityEntry[], appName: string): FileEntry[] {
+  const out: FileEntry[] = [];
+  for (const e of activityLog) {
+    if (e.app !== appName || !e.project_path) continue;
+    const root = parentDir(e.project_path);
+    out.push({
+      path: e.project_path,
+      name: baseName(e.project_path),
+      ext: extOf(e.project_path),
+      size: 0,
+      is_dir: false,
+      last_modified: e.last_seen,
+      project_root: root,
+      project_name: folderLabel(root),
+    });
+  }
+  return out;
 }
 
 // A file's location relative to its project root (e.g. "Content\levels").
@@ -181,7 +214,7 @@ export default function Creative() {
           const running    = instances.length > 0;
           // Files from the open projects, merged with everything recently worked on.
           const liveFiles  = instances.flatMap((r) => (r.project_path ? (projectFiles[r.project_path] ?? []) : []));
-          const appFiles   = mergeFiles(liveFiles, filesForApp(app)).slice(0, 40);
+          const appFiles   = mergeFiles(liveFiles, filesForApp(app), activityFilesForApp(activityLog, app.name)).slice(0, 40);
           const groups     = groupFiles(appFiles);
           const openRoots  = new Set(
             instances.map((r) => (r.project_path ? parentDir(r.project_path) : "")).filter(Boolean),
