@@ -21,6 +21,14 @@ export interface AppSettings {
   watched_paths: string[];
 }
 
+export interface DirItem {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+  last_modified: number;
+}
+
 export interface DuplicateFile {
   path: string;
   name: string;

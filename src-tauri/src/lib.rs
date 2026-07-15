@@ -1039,6 +1039,112 @@ fn open_path(path: String) -> Result<(), String> {
     }
 }
 
+// ── Organise: directory panels + real moves ──────────────────────────────────
+
+#[derive(Serialize, Clone)]
+struct DirItem {
+    name: String,
+    path: String,
+    is_dir: bool,
+    size: u64,
+    last_modified: u64,
+}
+
+fn list_dir_items_inner(path: String) -> Vec<DirItem> {
+    let mut items = Vec::new();
+    let Ok(rd) = fs::read_dir(&path) else { return items; };
+    for entry in rd.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || should_skip(&name) {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        let last_modified = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        items.push(DirItem {
+            name,
+            path: entry.path().to_string_lossy().into_owned(),
+            is_dir: meta.is_dir(),
+            size: if meta.is_file() { meta.len() } else { 0 },
+            last_modified,
+        });
+    }
+    items.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
+    items
+}
+
+/// Immediate children (files + folders) of a directory — the projects a panel shows.
+#[tauri::command]
+async fn list_dir_items(path: String) -> Vec<DirItem> {
+    tauri::async_runtime::spawn_blocking(move || list_dir_items_inner(path))
+        .await
+        .unwrap_or_default()
+}
+
+/// Whether a panel's directory is currently available (e.g. the drive is connected).
+#[tauri::command]
+fn is_path_active(path: String) -> bool {
+    std::path::Path::new(&path).is_dir()
+}
+
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let dest = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &dest)?;
+        } else {
+            fs::copy(entry.path(), &dest)?;
+        }
+    }
+    Ok(())
+}
+
+fn move_item_inner(src: String, dest_dir: String) -> Result<String, String> {
+    let src_path = validate_local_path(&src)?.to_path_buf();
+    let dest_dir_path = std::path::Path::new(&dest_dir);
+    if !dest_dir_path.is_dir() {
+        return Err("Destination folder is not available (drive disconnected?).".into());
+    }
+    let name = src_path.file_name().ok_or("Invalid source path.")?.to_os_string();
+    let target = dest_dir_path.join(&name);
+    if target.exists() {
+        return Err(format!("'{}' already exists in the destination.", name.to_string_lossy()));
+    }
+    // Guard against moving a folder into itself or its own subtree.
+    if target.starts_with(&src_path) {
+        return Err("Cannot move a folder into itself.".into());
+    }
+    // Same-volume rename is instant; fall back to copy + delete across drives.
+    if fs::rename(&src_path, &target).is_ok() {
+        return Ok(target.to_string_lossy().into_owned());
+    }
+    if src_path.is_dir() {
+        copy_dir_all(&src_path, &target).map_err(|e| e.to_string())?;
+        fs::remove_dir_all(&src_path).map_err(|e| e.to_string())?;
+    } else {
+        fs::copy(&src_path, &target).map_err(|e| e.to_string())?;
+        fs::remove_file(&src_path).map_err(|e| e.to_string())?;
+    }
+    Ok(target.to_string_lossy().into_owned())
+}
+
+/// Move a file or folder into another directory. Real move — instant rename on the
+/// same drive, copy-then-delete across drives. Original is only removed after a
+/// successful copy.
+#[tauri::command]
+async fn move_item(src: String, dest_dir: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || move_item_inner(src, dest_dir))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 // ── Duplicate scanning ────────────────────────────────────────────────────────
 
 // Set true to ask an in-progress duplicate scan to stop. Reset at scan start.
@@ -1265,6 +1371,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             list_drives,
             scan_directory,
@@ -1281,6 +1388,9 @@ pub fn run() {
             clear_activity_log,
             open_in_explorer,
             open_path,
+            list_dir_items,
+            is_path_active,
+            move_item,
             find_duplicates,
             cancel_duplicate_scan,
         ])
