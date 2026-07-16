@@ -38,6 +38,22 @@ export function parentDir(path: string): string {
   return i > 0 ? path.slice(0, i) : path;
 }
 
+// ── Theme ─────────────────────────────────────────────────────────────────────
+export type Theme = "dark" | "light";
+
+export function getStoredTheme(): Theme {
+  try { return localStorage.getItem("theme") === "light" ? "light" : "dark"; } catch { return "dark"; }
+}
+
+export function applyTheme(theme: Theme) {
+  document.documentElement.classList.toggle("light", theme === "light");
+}
+
+export function setStoredTheme(theme: Theme) {
+  try { localStorage.setItem("theme", theme); } catch { /* quota */ }
+  applyTheme(theme);
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
   const sizes = ["B", "KB", "MB", "GB", "TB"];

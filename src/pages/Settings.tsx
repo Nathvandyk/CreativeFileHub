@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getAllWebviewWindows } from "@tauri-apps/api/webviewWindow";
 import { check, Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { getStoredTheme, setStoredTheme, type Theme } from "../utils";
 
 async function getOverlay() {
   const wins = await getAllWebviewWindows();
@@ -39,6 +40,12 @@ function Toggle({
 export default function Settings() {
   const [overlayOn, setOverlayOn]   = useState(false);
   const [overlayReady, setReady]    = useState(false);
+  const [theme, setThemeState]      = useState<Theme>(getStoredTheme());
+
+  function chooseTheme(t: Theme) {
+    setStoredTheme(t);
+    setThemeState(t);
+  }
   const [update, setUpdate] = useState<Update | null>(null);
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
@@ -143,6 +150,27 @@ export default function Settings() {
             >
               {checking ? "Checking..." : "Check for updates"}
             </button>
+          </div>
+        </div>
+
+        {/* Appearance */}
+        <div className="flex items-center justify-between p-5">
+          <div className="pr-6">
+            <p className="text-sm font-medium text-white">Appearance</p>
+            <p className="text-xs text-zinc-500 mt-0.5">Choose a light or dark theme.</p>
+          </div>
+          <div className="flex gap-1 bg-zinc-800 rounded-lg p-1 shrink-0">
+            {(["dark", "light"] as Theme[]).map((t) => (
+              <button
+                key={t}
+                onClick={() => chooseTheme(t)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium capitalize transition-colors ${
+                  theme === t ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                {t}
+              </button>
+            ))}
           </div>
         </div>
 
