@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import "./App.css";
 import Dashboard from "./pages/Dashboard";
 import Scanner from "./pages/Scanner";
@@ -29,6 +30,11 @@ const navItems: { id: Page; label: string; icon: string }[] = [
 
 function App() {
   const [page, setPage] = useState<Page>("dashboard");
+  const [version, setVersion] = useState("");
+
+  useEffect(() => {
+    getVersion().then(setVersion).catch(() => {});
+  }, []);
 
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans">
@@ -37,7 +43,7 @@ function App() {
       <aside className="w-56 bg-zinc-900 border-r border-zinc-800 flex flex-col py-6 px-3 gap-1">
         <div className="px-3 mb-6">
           <h1 className="text-lg font-semibold tracking-tight text-white">CreativeHub</h1>
-          <p className="text-xs text-zinc-500 mt-0.5">Drive organiser</p>
+          <p className="text-xs text-zinc-500 mt-0.5">Drive organiser{version && ` · v${version}`}</p>
         </div>
 
         {navItems.map((item) => (
