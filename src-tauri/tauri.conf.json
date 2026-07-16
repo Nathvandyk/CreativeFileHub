@@ -40,7 +40,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVEMDdDQzVBNjBFQzEyM0EKUldRNkV1eGdXc3dIN2NOaGNGQVM0UDl5LzZZSkJKRU4yRHd4eUVLUW9LQ1FXNGtIQ1NJWERGMDUK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVCMzhFMDAyMTM1QzFCMzUKUldRMUcxd1RBdUE0Vy9qOGZhQU1JK0d2Y09pNjF3SmhVYkczRnAyOGdldm1xeGRyU2JsSUNPdVcK",
       "endpoints": [
         "https://github.com/Nathvandyk/CreativeFileHub/releases/latest/download/latest.json"
       ],
