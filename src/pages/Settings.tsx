@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { getAllWebviewWindows } from "@tauri-apps/api/webviewWindow";
+import { check, Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 
 async function getOverlay() {
   const wins = await getAllWebviewWindows();
@@ -37,6 +39,12 @@ function Toggle({
 export default function Settings() {
   const [overlayOn, setOverlayOn]   = useState(false);
   const [overlayReady, setReady]    = useState(false);
+  const [update, setUpdate] = useState<Update | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
+  const [updateMessage, setUpdateMessage] = useState<string | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
 
   useEffect(() => {
     getOverlay()
@@ -63,6 +71,43 @@ export default function Settings() {
     }
   }
 
+  async function checkForUpdates() {
+    setChecking(true);
+    setUpdateMessage(null);
+    setUpdateError(null);
+    try {
+      const available = await check();
+      setUpdate(available ?? null);
+      if (!available) setUpdateMessage("CreativeHub is up to date.");
+    } catch (e) {
+      setUpdateError(`Could not check for updates: ${String(e)}`);
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function installUpdate() {
+    if (!update) return;
+    setInstalling(true);
+    setUpdateError(null);
+    try {
+      let total = 0;
+      let received = 0;
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") total = event.data.contentLength ?? 0;
+        if (event.event === "Progress") {
+          received += event.data.chunkLength;
+          if (total > 0) setProgress(Math.round((received / total) * 100));
+        }
+      });
+      await relaunch();
+    } catch (e) {
+      setUpdateError(`Update failed: ${String(e)}`);
+      setInstalling(false);
+      setProgress(null);
+    }
+  }
+
   return (
     <div className="w-full">
       <div className="mb-8">
@@ -71,6 +116,36 @@ export default function Settings() {
       </div>
 
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl divide-y divide-zinc-800">
+        {/* Application Updates */}
+        <div className="flex items-center justify-between gap-6 p-5">
+          <div className="pr-6 min-w-0">
+            <p className="text-sm font-medium text-white">Application Updates</p>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Check GitHub for a newer CreativeHub release and install it automatically.
+            </p>
+            {updateMessage && <p className="text-xs text-emerald-400 mt-2">{updateMessage}</p>}
+            {updateError && <p className="text-xs text-red-400 mt-2 break-words">{updateError}</p>}
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {update && (
+              <button
+                onClick={installUpdate}
+                disabled={installing}
+                className="px-3 py-2 rounded-md bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-sm font-medium"
+              >
+                {installing ? (progress !== null ? `Downloading ${progress}%` : "Installing...") : `Install v${update.version}`}
+              </button>
+            )}
+            <button
+              onClick={checkForUpdates}
+              disabled={checking || installing}
+              className="px-3 py-2 rounded-md border border-zinc-700 hover:bg-zinc-800 disabled:opacity-60 text-zinc-200 text-sm font-medium"
+            >
+              {checking ? "Checking..." : "Check for updates"}
+            </button>
+          </div>
+        </div>
+
         {/* Desktop Overlay */}
         <div className="flex items-center justify-between p-5">
           <div className="pr-6">

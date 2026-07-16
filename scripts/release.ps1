@@ -26,7 +26,7 @@ Write-Host "Building CreativeHub v$version..." -ForegroundColor Cyan
 
 Push-Location $root
 try {
-    npm run tauri build
+    npm.cmd run tauri build
     if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
 } finally {
     Pop-Location
